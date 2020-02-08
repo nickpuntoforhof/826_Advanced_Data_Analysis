@@ -1,0 +1,10 @@
+---
+title: "826 Homework 1"
+output: html_notebook
+---
+
+
+
+```{r}
+data_path <- '../data/hw1_mitesA.txt'
+```
