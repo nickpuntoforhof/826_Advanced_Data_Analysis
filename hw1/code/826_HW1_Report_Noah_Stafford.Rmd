@@ -1,10 +1,282 @@
 ---
 title: "826 Homework 1"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
+```{r knitr_options , include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=4,
+fig.path='Figs/', warning=FALSE,
+message=FALSE)
+set.seed(53079239)
+```
+
+
+```{r Libraries, include=FALSE}
+# Load Libraries
+library(tidyverse)
+```
+
+Homework Description
+"The experiment was carried out in a lab at the Department of Entomology, University of California, Berkeley. Mites were exposed in 11-14 groups of ten to a given dose of permethrin for a fixed interval of time, and the number of mites dead in each group of ten at the end of the interval was recorded. This was done for each of seven doses, expressed in grams of active ingredient per 100 liters."
+
+Data
+```{r Data A, include=FALSE}
+data_path <- '../data/hw1_mitesA.txt'
+
+mitesA <- read.table(data_path, sep = " ", header = TRUE)
+mitesA$dose <- factor(mitesA$dose)
+mitesA$dose <- factor(mitesA$dose)
+mitesA$observed_data <- 1
+```
+
+Let's look at the data in a couple of ways to make sure everything checks out.
+```{r data plot A, include=FALSE}
+ggplot(mitesA, aes(x = factor(dose), y=num_dead)) + geom_dotplot(binaxis='y', stackdir='center',
+               stackratio=1.5, dotsize=0.5) + ggtitle("Dead Mites Per Group by Permethrin Dose") + labs(y = "Dead Mites / 10 Total Mites", x = "Permethrin Dose") + theme_light()
+```
+Let's look at the number of experiments that were done at each doseage.  It appears alternately 13 and 12 groups of 10 mites were tested for the lower doseages, and 11 groups for the higher doseages.
+```{r data A table}
+num_experiments_df <- mitesA %>% group_by(dose) %>% summarize(number_of_experiments = n())
+num_experiments <- as.vector(num_experiments_df$number_of_experiments)
+```
+
+a. Consider the data in hw1_mitesA.txt. At each of seven doses we have the number of dead out of ten, for between 11 and 14 groups of ten. Use this data to examine the hypothesis that at any given dose the mites are dying independently with a constant probability. Consider using computer simulations.
+
+'Hypothesis that the mites are dying independently at a constant probability' suggests a null model with a binomial distribution with a different p for every level of dose. 
+
+X = # of dead mites
+dose = Level of dose
+$$X|dose \sim BN(10,p_{dose})$$
+
+Estimate p for each doseage level
+```{r}
+dose_means <- mitesA %>% group_by(dose) %>% summarize(p_dose = weighted.mean(num_dead/num_mites,num_mites))
+print(dose_means)
+dose_vec <- as.vector(dose_means$dose)
+p_dose <- as.vector(dose_means$p_dose)
+num_dose_level <- length(dose_vec)
+```
+
+Run a goodness of fit test on each doseage level using the p_dose calculated from the observed data
+```{r}
+chi_sq = 0
+df = 0
+for(d in 1:num_dose_level){
+  loop_df <- mitesA %>% filter(dose == dose_vec[d])
+  counts <- table(factor(loop_df$num_dead, levels = 0:10))
+  labs <- as.numeric(names(counts))
+  
+  expected_counts <- c()
+  
+  for(l in labs){
+    expected_counts <- c(expected_counts, dbinom(l, size=10, prob=p_dose[d])*num_experiments[d]) 
+  }
+  
+  df = df + length(counts)
+  chi_sq = chi_sq + sum((counts-expected_counts)^2/expected_counts)
+}
+
+print(df)
+print(qchisq(.95, df=df-1))
+print(chi_sq)
+```
+
+
+Let's define a model and simulate data that is identical in dimension to our given data.  Then we can see how reasonable the data is in relation to how extreme it is relative to the simulated data.
+
+```{r}
+sim_miteA_data <- function(m, size, num_experiments, p_dose){
+
+  sim_data = list()
+  anova_results = list()
+  f_values <- c()
+  p_values <- c()
+  for(i in 1:m){
+    
+  sim_df = data.frame(dose = numeric(), num_mites=integer(), num_dead=integer())
+  
+  for(d in 1:num_dose_level){
+        
+        # Generate a dataframe of simulated data with the same dimension as the mitesA dataframe
+        sim_dead <- rbinom(num_experiments[d], size, p_dose[d])
+        loop_df <- data.frame(dose = rep(as.numeric(dose_vec[d])), num_mites=rep(size), num_dead = sim_dead)
+        loop_df$dose <- factor(loop_df$dose)
+        loop_df$observed_data <- 0
+        sim_df <- rbind(sim_df, loop_df)
+  }
+  
+  # Bind together the observed and simulated data
+  sim_df <- rbind(sim_df, mitesA)
+  sim_df$observed_data <- factor(sim_df$observed_data)
+  sim_data[[i]] <- sim_df
+  
+  anova_output <- aov(num_dead ~ dose + observed_data, data = sim_df)
+  anova_summary <- summary(anova_output)
+  
+  # Generate a list where each element holds the full anova summary, f-value of sim/obs variable, pvalue of the same
+  anova_results[[i]] <- anova_summary 
+  f_values <- c(f_values, anova_summary[[1]]$`F value`[2])
+  p_values <- c(p_values, anova_summary[[1]]$`Pr(>F)`[2])
+  
+  }
+  
+  # Create a dataframe with the f and p values
+  sim_metrics <- data.frame(sim_id=1:m, f_value = f_values, p_value = p_values)
+  
+  return(sim_metrics)
+
+}
+```
+
+Simulate ten thousand datasets from this model
+```{r simulate}
+sim_metrics <- sim_miteA_data(10000, 10, num_experiments, p_dose)
+```
+
+```{r}
+nrow(sim_metrics %>% filter(p_value < 0.05))/m
+```
+
+Visualize the distribution of p-values
+```{r}
+ggplot(sim_metrics, aes(x=p_value)) + geom_histogram()
+```
+
+```{r}
+sim_miteA_data_autocorr <- function(m, size, num_experiments, p_dose, lambda){
+  
+  rbinom_autocorr <- function(n, size, p, lambda){
+    q = p
+    sample <- c()
+    for(i in 1:n){
+      #print(p*lambda + (1-lambda)*q)
+      s <- rbinom(1, size, p*lambda + (1-lambda)*q)
+      sample <- c(sample, s)
+      q <- s/size
+    }
+    return(sample)
+  }
+
+  sim_data = list()
+  anova_results = list()
+  f_values <- c()
+  p_values <- c()
+  
+  for(i in 1:m){
+    
+  sim_df = data.frame(dose = numeric(), num_mites=integer(), num_dead=integer())
+  
+  for(d in 1:num_dose_level){
+        
+        # Generate a dataframe of simulated data with the same dimension as the mitesA dataframe
+        sim_dead <- rbinom_autocorr(num_experiments[d], size, p_dose[d], lambda)
+        loop_df <- data.frame(dose = rep(as.numeric(dose_vec[d])), num_mites=rep(size), num_dead = sim_dead)
+        loop_df$dose <- factor(loop_df$dose)
+        loop_df$observed_data <- 0
+        sim_df <- rbind(sim_df, loop_df)
+  }
+  
+  # Bind together the observed and simulated data
+  sim_df <- rbind(sim_df, mitesA)
+  sim_df$observed_data <- factor(sim_df$observed_data)
+  sim_data[[i]] <- sim_df
+  
+  anova_output <- aov(num_dead ~ dose + observed_data, data = sim_df)
+  anova_summary <- summary(anova_output)
+  
+  # Generate a list where each element holds the full anova summary, f-value of sim/obs variable, pvalue of the same
+  anova_results[[i]] <- anova_summary 
+  f_values <- c(f_values, anova_summary[[1]]$`F value`[2])
+  p_values <- c(p_values, anova_summary[[1]]$`Pr(>F)`[2])
+  
+  }
+  
+  # Create a dataframe with the f and p values
+  sim_metrics <- data.frame(sim_id=1:m, f_value = f_values, p_value = p_values)
+  
+  return(sim_metrics)
+
+}
+```
+
+```{r}
+sim_list <- list()
+for(lambda in seq(0,1,0.1)){
+  print(lambda)
+  sim_list[[as.character(lambda)]] <- sim_miteA_data_autocorr(10000, 10, num_experiments, p_dose, lambda)
+
+}
+```
+```{r}
+for(lambda in seq(0,1,0.1)){
+  print(lambda)
+  print(nrow(sim_list[[as.character(lambda)]] %>% filter(p_value < 0.05))/m)
+}
+```
+
+
+b. Make the binomial assumption for mites at each dose and pool the data across groups. Then fit a dose-response curve of a standard type (e.g., probit, logit, complementary log-log, etc.), justifying your choice. That is, fit a generalized linear model (with glm in R, or with the python module statsmodels).
+
+```{r}
+# Create full dataset by_miteA with row for each mite from summary dataset mitesA
+by_miteA <- data.frame(mite_id=integer(),
+                 dose=double(),
+                 death_status=logical(),
+                 stringsAsFactors=FALSE)
+mite_id_ticker = 1
+for (row in 1:nrow(mitesA)) {
+  
+    # Extract information in each row
+    num_mites <- mitesA[row, "num_mites"]
+    num_dead  <- mitesA[row, "num_dead"]
+    dose <- mitesA[row, "dose"]
+    
+    # Create vectors of data based on the number of mites per experiment
+    dead_vec <- !logical(length = num_dead)
+    alive_vec <- logical(length = num_mites - num_dead)
+    death_status_vec <- c(dead_vec, alive_vec)
+    dose_vec <- rep(dose, num_mites)
+    ids <- seq(from = mite_id_ticker, to = mite_id_ticker + num_mites - 1)
+    
+    # Create dataframe from vectors
+    loop_df <- data.frame(mite_id = ids, dose = dose_vec, death_status = death_status_vec)
+    
+    # Append at each iteration to dataframe by_miteA
+    by_miteA <- rbind(by_miteA, loop_df)
+    
+    mite_id_ticker <- mite_id_ticker + num_mites
+}
+```
 
 
 ```{r}
-data_path <- '../data/hw1_mitesA.txt'
+miteA_logit <- glm(death_status ~ dose, data = by_miteA, family = binomial(link = "logit"))
+
+pred_x <- seq(0, 10, 0.01)
+pred_y <- predict(miteA_logit, list(dose = pred_x), type="response")
+
+plot(mitesA$dose, mitesA$num_dead/mitesA$num_mites, pch = 16, xlab = "Dose", ylab = "Death Status")
+lines(pred_x, pred_y)
 ```
+
+
+```{r}
+miteA_probit <- glm(death_status ~ dose, data = by_miteA, family = binomial(link = "probit"))
+
+pred_x <- seq(0, 10, 0.01)
+pred_y <- predict(miteA_probit, list(dose = pred_x), type="response")
+
+plot(jitter(by_miteA$dose,1), by_miteA$death_status, pch = 16, xlab = "Dose", ylab = "Death Status")
+lines(pred_x, pred_y)
+```
+
+
+c. Estimate the LD50 (the dose at which the probability of death is 50%) and its standard error (SE).
+
+d. How might you need to modify your analyses in (b) and (c) in light of your conclusions in (a)?
+
+e. Repeat (a)-(d) for data on a second strain of mites, in hw1_mitesB.txt.
+
+###f. Assess whether the does-response curves for the two strains are parallel.
