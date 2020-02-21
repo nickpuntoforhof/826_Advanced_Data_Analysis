@@ -21,50 +21,43 @@ library(tidyverse)
 Homework Description
 "The experiment was carried out in a lab at the Department of Entomology, University of California, Berkeley. Mites were exposed in 11-14 groups of ten to a given dose of permethrin for a fixed interval of time, and the number of mites dead in each group of ten at the end of the interval was recorded. This was done for each of seven doses, expressed in grams of active ingredient per 100 liters."
 
-Data
-```{r Data A, include=FALSE}
+```{r load_data, include=FALSE}
 data_path <- '../data/hw1_mitesA.txt'
 
-mitesA <- read.table(data_path, sep = " ", header = TRUE)
-mitesA$dose <- factor(mitesA$dose)
-mitesA$dose <- factor(mitesA$dose)
-mitesA$observed_data <- 1
+mites <- read.table(data_path, sep = " ", header = TRUE)
+mites$dose <- factor(mites$dose)
+mites$observed_data <- 1
 ```
 
-Let's look at the data in a couple of ways to make sure everything checks out.
-```{r data plot A, include=FALSE}
-ggplot(mitesA, aes(x = factor(dose), y=num_dead)) + geom_dotplot(binaxis='y', stackdir='center',
+First, let's look at the data in a couple of ways to gain a baseline understanding of the data and make sure there aren't any obvious issues.
+```{r data_scatterplot, echo = FALSE}
+ggplot(mites, aes(x = factor(dose), y=num_dead)) + geom_dotplot(binaxis='y', stackdir='center',
                stackratio=1.5, dotsize=0.5) + ggtitle("Dead Mites Per Group by Permethrin Dose") + labs(y = "Dead Mites / 10 Total Mites", x = "Permethrin Dose") + theme_light()
 ```
 Let's look at the number of experiments that were done at each doseage.  It appears alternately 13 and 12 groups of 10 mites were tested for the lower doseages, and 11 groups for the higher doseages.
-```{r data A table}
-num_experiments_df <- mitesA %>% group_by(dose) %>% summarize(number_of_experiments = n())
+```{r num_exp_table, echo = FALSE}
+num_experiments_df <- mites %>% group_by(dose) %>% summarize(number_of_experiments = n())
 num_experiments <- as.vector(num_experiments_df$number_of_experiments)
+print(num_experiments_df)
 ```
 
-a. Consider the data in hw1_mitesA.txt. At each of seven doses we have the number of dead out of ten, for between 11 and 14 groups of ten. Use this data to examine the hypothesis that at any given dose the mites are dying independently with a constant probability. Consider using computer simulations.
+a. Consider the data in hw1_mites.txt. At each of seven doses we have the number of dead out of ten, for between 11 and 14 groups of ten. Use this data to examine the hypothesis that at any given dose the mites are dying independently with a constant probability. Consider using computer simulations.
 
-'Hypothesis that the mites are dying independently at a constant probability' suggests a null model with a binomial distribution with a different p for every level of dose. 
+'Hypothesis that the mites are dying independently at a constant probability' suggests that we want to model the data with a binomial distribution with a different probability of dying p for every level of dose.  This distribution assumes the observations are independent from each other.  Since there are no covariates included in this dataset, simple analyses, such as looking at associations between covariates that varied across or within experiments, cannot be done.  What remains to do is define a null model for the data, and rigoriously test to see if it is reasonable to say that the data could have come from this model.  
+
+Since we are only testing the independence of the observations conditional on the dose level, we only need to test the assumptions of independence within the doses, and hence only define the conditional distribution here: 
 
 X = # of dead mites
+
 dose = Level of dose
 $$X|dose \sim BN(10,p_{dose})$$
 
-Estimate p for each doseage level
-```{r}
-dose_means <- mitesA %>% group_by(dose) %>% summarize(p_dose = weighted.mean(num_dead/num_mites,num_mites))
-print(dose_means)
-dose_vec <- as.vector(dose_means$dose)
-p_dose <- as.vector(dose_means$p_dose)
-num_dose_level <- length(dose_vec)
-```
-
-Run a goodness of fit test on each doseage level using the p_dose calculated from the observed data
+First, let's apply some standard statistical analyses to the data to see if we can gain some understanding of how well the data is modeled by my proposed distribution.  First, let's run a goodness of fit test on the data, which tests to see if the counts in the observed data deviate significantly from the counts that would be expected if the data was being generated from my model.
 ```{r}
 chi_sq = 0
 df = 0
 for(d in 1:num_dose_level){
-  loop_df <- mitesA %>% filter(dose == dose_vec[d])
+  loop_df <- mites %>% filter(dose == dose_vec[d])
   counts <- table(factor(loop_df$num_dead, levels = 0:10))
   labs <- as.numeric(names(counts))
   
@@ -77,161 +70,125 @@ for(d in 1:num_dose_level){
   df = df + length(counts)
   chi_sq = chi_sq + sum((counts-expected_counts)^2/expected_counts)
 }
+```
+There's not much here.  With `r df` degrees of freedom, a 5% alpha gives us a critical value of `r round(qchisq(.95, df=df-1),3)`, which is far above the calculated chi-squared statistic of `r round(chi_sq,3)` This result provides no evidence aginst the binomial model being an appropriate fit for the data.
 
-print(df)
-print(qchisq(.95, df=df-1))
-print(chi_sq)
+However, this dataset is small.  The number of observations within each dose level (10-13) is very small, and so these kinds of traditional statistical tests are going to suffer from lack of power. 
+
+Another approach might yield more interesting results.  Simulation offers an alternative look at this problem.  Let's use the model we've defined, and simulate data that is idendical in dimension to our given data.  Then we can compare the observed dataset to the simulated ones.  If the means or variances of the observed dataset differ from the simulated ones in a large proportion of the simulated datasets, then we need to question whether the assumptions of the model I have proposed are valid for the data.
+
+The first thing that needs to be done when defining this model is to define the $p_{dose}$ values. The simple way of doing this is to estimate the means for each dose level from the data.
+```{r , echo = FALSE}
+dose_means <- mites %>% group_by(dose) %>% summarize(p_dose = weighted.mean(num_dead/num_mites,num_mites))
+print(dose_means)
+dose_vec <- as.vector(dose_means$dose)
+p_dose <- as.vector(dose_means$p_dose)
+num_dose_level <- length(dose_vec)
 ```
 
+To simulate a dataset, I drew observations randomly from a binomial distribution with n = 10 and with p equal to my estimates in the table above.  For each dose level I drew the same number of observations as in the observed dataset (dose level 0.4 had 12 experiments so each of my simulated datasets also has 12 observations for dose level 4).  I did this 10,000 times, producing 10,000 simulated datasets.
+```{r, sim_mite_data, include = FALSE}
+m = 10000
 
-Let's define a model and simulate data that is identical in dimension to our given data.  Then we can see how reasonable the data is in relation to how extreme it is relative to the simulated data.
+sim_mites_matrix <- function(d, num_experiments, size, p_dose) {
+  
+  # Generate a dataframe of simulated data with the same dimension as the mites dataframe
+  sim_dead <- rbinom(num_experiments[d], size, p_dose[d])
+  
+  loop_df <- as.matrix(cbind(dose = rep(as.numeric(dose_vec[d])), num_mites=rep(size), num_dead = sim_dead))
+}
 
-```{r}
-sim_miteA_data <- function(m, size, num_experiments, p_dose){
+sim_mites_data <- function(i, num_experiments, size, p_dose, num_dose_level){
+  
+  sim_df <- data.frame(do.call(rbind, lapply(1:num_dose_level, sim_mites_matrix, num_experiments, 10, p_dose)))
+  
+  return(sim_df)
 
-  sim_data = list()
-  anova_results = list()
-  f_values <- c()
-  p_values <- c()
-  for(i in 1:m){
-    
-  sim_df = data.frame(dose = numeric(), num_mites=integer(), num_dead=integer())
+}
+
+sim_data <- lapply(1:m, sim_mites_data, num_experiments = num_experiments, size = 10, p_dose = p_dose, num_dose_level = num_dose_level)
+```
+
+Next, I ran a two-way anova on each simulated dataset paired with the observed dataset.  The groups being compared are the dose levels and the simulated/observed data.  A significant p-value in this analysis will indicate that the means of the observed and simulated data are significantly different within each dose level.  Since we simulated 10,000 datasets, we end up with 10,000 p-values.  I chose 0.05 as my alpha.  Under the null, a p-value will exceed the 0.05 threshold 5% of the time.  So, if the tests have p-values less than 0.05 at a rate higher than 5%, we'll have evidence that the data is poorly fit by a binomial model.
+```{r, two_way_anova, include = FALSE}
+two_way_anova <- function(sim_data, obs_data){
+  sim_data$dose <- factor(sim_data$dose)
+  sim_data$observed_data <- 0
+  df <- rbind(sim_data, obs_data)
+  df$observed_data <- factor(df$observed_data)
   
-  for(d in 1:num_dose_level){
-        
-        # Generate a dataframe of simulated data with the same dimension as the mitesA dataframe
-        sim_dead <- rbinom(num_experiments[d], size, p_dose[d])
-        loop_df <- data.frame(dose = rep(as.numeric(dose_vec[d])), num_mites=rep(size), num_dead = sim_dead)
-        loop_df$dose <- factor(loop_df$dose)
-        loop_df$observed_data <- 0
-        sim_df <- rbind(sim_df, loop_df)
-  }
-  
-  # Bind together the observed and simulated data
-  sim_df <- rbind(sim_df, mitesA)
-  sim_df$observed_data <- factor(sim_df$observed_data)
-  sim_data[[i]] <- sim_df
-  
-  anova_output <- aov(num_dead ~ dose + observed_data, data = sim_df)
+  anova_output <- aov(num_dead ~ dose + observed_data, data = df)
   anova_summary <- summary(anova_output)
+  f_value <- anova_summary[[1]]$`F value`[2]
+  p_value <- anova_summary[[1]]$`Pr(>F)`[2]
   
-  # Generate a list where each element holds the full anova summary, f-value of sim/obs variable, pvalue of the same
-  anova_results[[i]] <- anova_summary 
-  f_values <- c(f_values, anova_summary[[1]]$`F value`[2])
-  p_values <- c(p_values, anova_summary[[1]]$`Pr(>F)`[2])
-  
-  }
-  
-  # Create a dataframe with the f and p values
-  sim_metrics <- data.frame(sim_id=1:m, f_value = f_values, p_value = p_values)
-  
-  return(sim_metrics)
-
+  out_stats <- as.matrix(cbind(f_value, p_value))
+  return(out_stats)
 }
+
+sim_metrics <- data.frame(do.call(rbind, lapply(sim_data, two_way_anova, obs_data = mites)))
+
+p_value_proportion <- nrow(sim_metrics %>% filter(p_value < 0.05))/m
 ```
 
-Simulate ten thousand datasets from this model
-```{r simulate}
-sim_metrics <- sim_miteA_data(10000, 10, num_experiments, p_dose)
+Below we see the distribution of p-values from the anovas.  The exact proportion of the 10,000 p-values that fell below the 0.05 threshold is `r p_value_proportion`.  There is no evidence here the observed data is poorly modeled by my model.  Of course, this result is expected.  I defined the means of the binomial distributions as the means of the data.  So comparing the means of the observed data with data simulated from a model using the exact same means isn't going to lead to significant results.  What is more important to test is whether the variance around the means is similar to what is expected from a binomial distribution.  
+```{r anova_plot, echo = FALSE}
+ggplot(sim_metrics, aes(x=p_value)) + geom_histogram() + ggtitle("Histogram of Anova P-Values: Comparing Observed and Simulated Data") + labs(x = "P-Value") + theme_light()
 ```
 
-```{r}
-nrow(sim_metrics %>% filter(p_value < 0.05))/m
+In the binomial distribution, the variance is defined as 
+
+$n*p*q$
+
+Here are the observed and expected variances for each dose level in the data.
+```{r expected_variance,echo = FALSE}
+dose_mean_var <- mites %>% group_by(dose) %>% summarize(p_obs = mean(num_dead/10), obs_var = var(num_dead)) %>% mutate(expected_variance = 10*p_obs*(1-p_obs))
+print(dose_mean_var)
 ```
 
-Visualize the distribution of p-values
-```{r}
-ggplot(sim_metrics, aes(x=p_value)) + geom_histogram()
-```
+To test whether the variances in the observed data are significantly different then what would be expected from a binomial distribution, we can do a very similar thing to the first analysis.  We will again run a two-way anova, with the dose levels and sim/observed data at the two groups.  This time, however, the measurements being compared are the absolute differences between each of the counts and the mean count per dose level.  So, if the observed data is varying around each dose's mean count to a larger or smaller extent than the sim data, many of these anova analyses should have low p-values.  This analysis is an extension of Levene's test, and is robust to non-normality.  Again, we run an anova on the 10,000 simulated datasets.
+```{r two_way_levene, include=FALSE}
+two_way_anova_levene <- function(sim_data, obs_data){
+  sim_data$dose <- factor(sim_data$dose)
+  sim_data$observed_data <- 0
+  df <- rbind(sim_data, obs_data)
+  df$observed_data <- factor(df$observed_data)
+  df <- df %>% group_by(dose, observed_data) %>% mutate(abs_diff = abs(num_dead - mean(num_dead)))
 
-```{r}
-sim_miteA_data_autocorr <- function(m, size, num_experiments, p_dose, lambda){
-  
-  rbinom_autocorr <- function(n, size, p, lambda){
-    q = p
-    sample <- c()
-    for(i in 1:n){
-      #print(p*lambda + (1-lambda)*q)
-      s <- rbinom(1, size, p*lambda + (1-lambda)*q)
-      sample <- c(sample, s)
-      q <- s/size
-    }
-    return(sample)
-  }
-
-  sim_data = list()
-  anova_results = list()
-  f_values <- c()
-  p_values <- c()
-  
-  for(i in 1:m){
-    
-  sim_df = data.frame(dose = numeric(), num_mites=integer(), num_dead=integer())
-  
-  for(d in 1:num_dose_level){
-        
-        # Generate a dataframe of simulated data with the same dimension as the mitesA dataframe
-        sim_dead <- rbinom_autocorr(num_experiments[d], size, p_dose[d], lambda)
-        loop_df <- data.frame(dose = rep(as.numeric(dose_vec[d])), num_mites=rep(size), num_dead = sim_dead)
-        loop_df$dose <- factor(loop_df$dose)
-        loop_df$observed_data <- 0
-        sim_df <- rbind(sim_df, loop_df)
-  }
-  
-  # Bind together the observed and simulated data
-  sim_df <- rbind(sim_df, mitesA)
-  sim_df$observed_data <- factor(sim_df$observed_data)
-  sim_data[[i]] <- sim_df
-  
-  anova_output <- aov(num_dead ~ dose + observed_data, data = sim_df)
+  anova_output <- aov(abs_diff ~ dose + observed_data, data = df)
   anova_summary <- summary(anova_output)
+  f_value <- anova_summary[[1]]$`F value`[2]
+  p_value <- anova_summary[[1]]$`Pr(>F)`[2]
   
-  # Generate a list where each element holds the full anova summary, f-value of sim/obs variable, pvalue of the same
-  anova_results[[i]] <- anova_summary 
-  f_values <- c(f_values, anova_summary[[1]]$`F value`[2])
-  p_values <- c(p_values, anova_summary[[1]]$`Pr(>F)`[2])
-  
-  }
-  
-  # Create a dataframe with the f and p values
-  sim_metrics <- data.frame(sim_id=1:m, f_value = f_values, p_value = p_values)
-  
-  return(sim_metrics)
-
+  out_stats <- as.matrix(cbind(f_value, p_value))
+  return(out_stats)
 }
+
+sim_metrics <- data.frame(do.call(rbind, lapply(sim_data, two_way_anova_levene, obs_data = mites)))
+
+p_value_proportion <- nrow(sim_metrics %>% filter(p_value < 0.05))/m
 ```
 
-```{r}
-sim_list <- list()
-for(lambda in seq(0,1,0.1)){
-  print(lambda)
-  sim_list[[as.character(lambda)]] <- sim_miteA_data_autocorr(10000, 10, num_experiments, p_dose, lambda)
-
-}
+```{r anova_plot, echo = FALSE}
+ggplot(sim_metrics, aes(x=p_value)) + geom_histogram() + ggtitle("Histogram of Levene's Test P-Values: Comparing Observed and Simulated Data") + labs(x = "P-Value") + theme_light()
 ```
-```{r}
-for(lambda in seq(0,1,0.1)){
-  print(lambda)
-  print(nrow(sim_list[[as.character(lambda)]] %>% filter(p_value < 0.05))/m)
-}
-```
-
+There doesn't seem to be much here.  The exact proportion of the 10,000 p-values that fell below the 0.05 threshold is `r p_value_proportion`, which approaches the 5% level but falls far short.  At this point, I've taken a couple of routes to testing how well the model is fit.  From what I have seen here, making the assumption that the observed data is distributed binomial conditional on the dose level seems to be a valid assumption for this dataset.
 
 b. Make the binomial assumption for mites at each dose and pool the data across groups. Then fit a dose-response curve of a standard type (e.g., probit, logit, complementary log-log, etc.), justifying your choice. That is, fit a generalized linear model (with glm in R, or with the python module statsmodels).
 
 ```{r}
-# Create full dataset by_miteA with row for each mite from summary dataset mitesA
+# Create full dataset by_miteA with row for each mite from summary dataset mites
 by_miteA <- data.frame(mite_id=integer(),
                  dose=double(),
                  death_status=logical(),
                  stringsAsFactors=FALSE)
 mite_id_ticker = 1
-for (row in 1:nrow(mitesA)) {
+for (row in 1:nrow(mites)) {
   
     # Extract information in each row
-    num_mites <- mitesA[row, "num_mites"]
-    num_dead  <- mitesA[row, "num_dead"]
-    dose <- mitesA[row, "dose"]
+    num_mites <- mites[row, "num_mites"]
+    num_dead  <- mites[row, "num_dead"]
+    dose <- mites[row, "dose"]
     
     # Create vectors of data based on the number of mites per experiment
     dead_vec <- !logical(length = num_dead)
@@ -248,6 +205,8 @@ for (row in 1:nrow(mitesA)) {
     
     mite_id_ticker <- mite_id_ticker + num_mites
 }
+
+by_miteA$dose <- as.numeric(by_miteA$dose)
 ```
 
 
@@ -255,9 +214,9 @@ for (row in 1:nrow(mitesA)) {
 miteA_logit <- glm(death_status ~ dose, data = by_miteA, family = binomial(link = "logit"))
 
 pred_x <- seq(0, 10, 0.01)
-pred_y <- predict(miteA_logit, list(dose = pred_x), type="response")
+pred_y <- predict(miteA_logit, list(dose = as.numeric(pred_x)), type="response")
 
-plot(mitesA$dose, mitesA$num_dead/mitesA$num_mites, pch = 16, xlab = "Dose", ylab = "Death Status")
+plot(mites$dose, mites$num_dead/mites$num_mites, pch = 16, xlab = "Dose", ylab = "Death Status")
 lines(pred_x, pred_y)
 ```
 
