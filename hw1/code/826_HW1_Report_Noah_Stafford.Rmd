@@ -4,7 +4,7 @@ output:
   html_document:
     df_print: paged
 ---
-
+## Noah Stafford
 ```{r knitr_options , include=FALSE}
 knitr::opts_chunk$set(fig.width=12, fig.height=4,
 fig.path='Figs/', warning=FALSE,
@@ -16,12 +16,14 @@ set.seed(53079239)
 ```{r Libraries, include=FALSE}
 # Load Libraries
 library(tidyverse)
+library(boot)
+library(MASS)
 ```
 
 Homework Description
 "The experiment was carried out in a lab at the Department of Entomology, University of California, Berkeley. Mites were exposed in 11-14 groups of ten to a given dose of permethrin for a fixed interval of time, and the number of mites dead in each group of ten at the end of the interval was recorded. This was done for each of seven doses, expressed in grams of active ingredient per 100 liters."
 
-```{r load_data, include=FALSE}
+```{r, include=FALSE}
 data_path <- '../data/hw1_mitesA.txt'
 
 mites <- read.table(data_path, sep = " ", header = TRUE)
@@ -30,12 +32,12 @@ mites$observed_data <- 1
 ```
 
 First, let's look at the data in a couple of ways to gain a baseline understanding of the data and make sure there aren't any obvious issues.
-```{r data_scatterplot, echo = FALSE}
+```{r, echo = FALSE}
 ggplot(mites, aes(x = factor(dose), y=num_dead)) + geom_dotplot(binaxis='y', stackdir='center',
                stackratio=1.5, dotsize=0.5) + ggtitle("Dead Mites Per Group by Permethrin Dose") + labs(y = "Dead Mites / 10 Total Mites", x = "Permethrin Dose") + theme_light()
 ```
 Let's look at the number of experiments that were done at each doseage.  It appears alternately 13 and 12 groups of 10 mites were tested for the lower doseages, and 11 groups for the higher doseages.
-```{r num_exp_table, echo = FALSE}
+```{r, echo = FALSE}
 num_experiments_df <- mites %>% group_by(dose) %>% summarize(number_of_experiments = n())
 num_experiments <- as.vector(num_experiments_df$number_of_experiments)
 print(num_experiments_df)
@@ -53,7 +55,12 @@ dose = Level of dose
 $$X|dose \sim BN(10,p_{dose})$$
 
 First, let's apply some standard statistical analyses to the data to see if we can gain some understanding of how well the data is modeled by my proposed distribution.  First, let's run a goodness of fit test on the data, which tests to see if the counts in the observed data deviate significantly from the counts that would be expected if the data was being generated from my model.
-```{r}
+```{r, include = FALSE}
+dose_means <- mites %>% group_by(dose) %>% summarize(p_dose = weighted.mean(num_dead/num_mites,num_mites))
+dose_vec <- as.vector(dose_means$dose)
+p_dose <- as.vector(dose_means$p_dose)
+num_dose_level <- length(dose_vec)
+
 chi_sq = 0
 df = 0
 for(d in 1:num_dose_level){
@@ -78,7 +85,7 @@ However, this dataset is small.  The number of observations within each dose lev
 Another approach might yield more interesting results.  Simulation offers an alternative look at this problem.  Let's use the model we've defined, and simulate data that is idendical in dimension to our given data.  Then we can compare the observed dataset to the simulated ones.  If the means or variances of the observed dataset differ from the simulated ones in a large proportion of the simulated datasets, then we need to question whether the assumptions of the model I have proposed are valid for the data.
 
 The first thing that needs to be done when defining this model is to define the $p_{dose}$ values. The simple way of doing this is to estimate the means for each dose level from the data.
-```{r , echo = FALSE}
+```{r, echo = FALSE}
 dose_means <- mites %>% group_by(dose) %>% summarize(p_dose = weighted.mean(num_dead/num_mites,num_mites))
 print(dose_means)
 dose_vec <- as.vector(dose_means$dose)
@@ -87,7 +94,7 @@ num_dose_level <- length(dose_vec)
 ```
 
 To simulate a dataset, I drew observations randomly from a binomial distribution with n = 10 and with p equal to my estimates in the table above.  For each dose level I drew the same number of observations as in the observed dataset (dose level 0.4 had 12 experiments so each of my simulated datasets also has 12 observations for dose level 4).  I did this 10,000 times, producing 10,000 simulated datasets.
-```{r, sim_mite_data, include = FALSE}
+```{r, include = FALSE}
 m = 10000
 
 sim_mites_matrix <- function(d, num_experiments, size, p_dose) {
@@ -110,7 +117,7 @@ sim_data <- lapply(1:m, sim_mites_data, num_experiments = num_experiments, size 
 ```
 
 Next, I ran a two-way anova on each simulated dataset paired with the observed dataset.  The groups being compared are the dose levels and the simulated/observed data.  A significant p-value in this analysis will indicate that the means of the observed and simulated data are significantly different within each dose level.  Since we simulated 10,000 datasets, we end up with 10,000 p-values.  I chose 0.05 as my alpha.  Under the null, a p-value will exceed the 0.05 threshold 5% of the time.  So, if the tests have p-values less than 0.05 at a rate higher than 5%, we'll have evidence that the data is poorly fit by a binomial model.
-```{r, two_way_anova, include = FALSE}
+```{r, include = FALSE}
 two_way_anova <- function(sim_data, obs_data){
   sim_data$dose <- factor(sim_data$dose)
   sim_data$observed_data <- 0
@@ -132,7 +139,7 @@ p_value_proportion <- nrow(sim_metrics %>% filter(p_value < 0.05))/m
 ```
 
 Below we see the distribution of p-values from the anovas.  The exact proportion of the 10,000 p-values that fell below the 0.05 threshold is `r p_value_proportion`.  There is no evidence here the observed data is poorly modeled by my model.  Of course, this result is expected.  I defined the means of the binomial distributions as the means of the data.  So comparing the means of the observed data with data simulated from a model using the exact same means isn't going to lead to significant results.  What is more important to test is whether the variance around the means is similar to what is expected from a binomial distribution.  
-```{r anova_plot, echo = FALSE}
+```{r, echo = FALSE}
 ggplot(sim_metrics, aes(x=p_value)) + geom_histogram() + ggtitle("Histogram of Anova P-Values: Comparing Observed and Simulated Data") + labs(x = "P-Value") + theme_light()
 ```
 
@@ -141,13 +148,13 @@ In the binomial distribution, the variance is defined as
 $n*p*q$
 
 Here are the observed and expected variances for each dose level in the data.
-```{r expected_variance,echo = FALSE}
+```{r, echo = FALSE}
 dose_mean_var <- mites %>% group_by(dose) %>% summarize(p_obs = mean(num_dead/10), obs_var = var(num_dead)) %>% mutate(expected_variance = 10*p_obs*(1-p_obs))
 print(dose_mean_var)
 ```
 
 To test whether the variances in the observed data are significantly different then what would be expected from a binomial distribution, we can do a very similar thing to the first analysis.  We will again run a two-way anova, with the dose levels and sim/observed data at the two groups.  This time, however, the measurements being compared are the absolute differences between each of the counts and the mean count per dose level.  So, if the observed data is varying around each dose's mean count to a larger or smaller extent than the sim data, many of these anova analyses should have low p-values.  This analysis is an extension of Levene's test, and is robust to non-normality.  Again, we run an anova on the 10,000 simulated datasets.
-```{r two_way_levene, include=FALSE}
+```{r, include=FALSE}
 two_way_anova_levene <- function(sim_data, obs_data){
   sim_data$dose <- factor(sim_data$dose)
   sim_data$observed_data <- 0
@@ -169,16 +176,18 @@ sim_metrics <- data.frame(do.call(rbind, lapply(sim_data, two_way_anova_levene, 
 p_value_proportion <- nrow(sim_metrics %>% filter(p_value < 0.05))/m
 ```
 
-```{r anova_plot, echo = FALSE}
+```{r, echo = FALSE}
 ggplot(sim_metrics, aes(x=p_value)) + geom_histogram() + ggtitle("Histogram of Levene's Test P-Values: Comparing Observed and Simulated Data") + labs(x = "P-Value") + theme_light()
 ```
 There doesn't seem to be much here.  The exact proportion of the 10,000 p-values that fell below the 0.05 threshold is `r p_value_proportion`, which approaches the 5% level but falls far short.  At this point, I've taken a couple of routes to testing how well the model is fit.  From what I have seen here, making the assumption that the observed data is distributed binomial conditional on the dose level seems to be a valid assumption for this dataset.
 
 b. Make the binomial assumption for mites at each dose and pool the data across groups. Then fit a dose-response curve of a standard type (e.g., probit, logit, complementary log-log, etc.), justifying your choice. That is, fit a generalized linear model (with glm in R, or with the python module statsmodels).
 
-```{r}
-# Create full dataset by_miteA with row for each mite from summary dataset mites
-by_miteA <- data.frame(mite_id=integer(),
+The logit and probit models seem to be fitting the data with very similar accuracy.  Their AICs are nearly equivalent.  I will use the logit model, since I find the math for calculating the LD50 intuitive in this case.
+
+```{r, include=FALSE}
+# Create full dataset by_mites with row for each mite from summary dataset mites
+by_mites <- data.frame(mite_id=integer(),
                  dose=double(),
                  death_status=logical(),
                  stringsAsFactors=FALSE)
@@ -200,42 +209,292 @@ for (row in 1:nrow(mites)) {
     # Create dataframe from vectors
     loop_df <- data.frame(mite_id = ids, dose = dose_vec, death_status = death_status_vec)
     
-    # Append at each iteration to dataframe by_miteA
-    by_miteA <- rbind(by_miteA, loop_df)
+    # Append at each iteration to dataframe by_mites
+    by_mites <- rbind(by_mites, loop_df)
     
     mite_id_ticker <- mite_id_ticker + num_mites
 }
 
-by_miteA$dose <- as.numeric(by_miteA$dose)
+by_mites$dose <- as.numeric(as.character(by_mites$dose))
 ```
 
 
-```{r}
-miteA_logit <- glm(death_status ~ dose, data = by_miteA, family = binomial(link = "logit"))
+```{r, echo = FALSE}
+mites_logit_A <- glm(death_status ~ dose, data = by_mites, family = binomial(link = "logit"))
+mites_logit <- mites_logit_A
+print(summary(mites_logit))
 
-pred_x <- seq(0, 10, 0.01)
-pred_y <- predict(miteA_logit, list(dose = as.numeric(pred_x)), type="response")
+pred_x <- seq(0, 4, 0.01)
+pred_y <- predict(mites_logit, list(dose = as.numeric(pred_x)), type="response")
 
-plot(mites$dose, mites$num_dead/mites$num_mites, pch = 16, xlab = "Dose", ylab = "Death Status")
+plot(as.numeric(as.character(mites$dose)), mites$num_dead/mites$num_mites, pch = 16, xlab = "Dose", ylab = "Death Status", main = 'Dose-Response Curve: Logit')
 lines(pred_x, pred_y)
 ```
 
 
-```{r}
-miteA_probit <- glm(death_status ~ dose, data = by_miteA, family = binomial(link = "probit"))
+```{r, echo = FALSE}
+mites_probit <- glm(death_status ~ dose, data = by_mites, family = binomial(link = "probit"))
+
+print(summary(mites_probit))
 
 pred_x <- seq(0, 10, 0.01)
-pred_y <- predict(miteA_probit, list(dose = pred_x), type="response")
+pred_y <- predict(mites_probit, list(dose = pred_x), type="response")
 
-plot(jitter(by_miteA$dose,1), by_miteA$death_status, pch = 16, xlab = "Dose", ylab = "Death Status")
+plot(as.numeric(as.character(mites$dose)), mites$num_dead/mites$num_mites, pch = 16, xlab = "Dose", ylab = "Death Status", main = 'Dose-Response Curve: Probit')
 lines(pred_x, pred_y)
 ```
 
 
 c. Estimate the LD50 (the dose at which the probability of death is 50%) and its standard error (SE).
 
+I reasearched for a while on how to estimate the standard error for LD50.  I found it difficult to find an explanation of how to calculate the closed-form solution in that case.  For these reasons, I will estimate LD50 and its standard error via boostrap instead.
+```{r, include=FALSE}
+
+ld50_boot <- function(dat, ind) {
+  d <- dat[ind,]
+  boot_fit <- glm(death_status ~ dose, data = d, family = binomial(link = "probit"))
+  coefs <- coef(boot_fit)
+  return((-coefs[1])/coefs[2])
+} 
+
+ld50_est <- boot(data=by_mites, statistic = ld50_boot, R=1000)
+```
+
+```{r, echo=FALSE}
+print(ld50_est)
+```
+The results of the boostrapping return an an LD50 estimate of 1.57 with a standard error of 0.0677
+
 d. How might you need to modify your analyses in (b) and (c) in light of your conclusions in (a)?
+
+Since I concluded in (a) that I could find no reason to doubt the data were generated as independent observtions from a binomial distribution, there's no adjustments that need to be done here, given that this is the exact assumption made by logistic regression.
+
+```{r, include = FALSE}
+#copy the data to save it from erasure in the next block
+by_mites_A <- by_mites
+by_mites_A$strain <- 1
+```
+
 
 e. Repeat (a)-(d) for data on a second strain of mites, in hw1_mitesB.txt.
 
-###f. Assess whether the does-response curves for the two strains are parallel.
+```{r load_data, include=FALSE}
+data_path <- '../data/hw1_mitesB.txt'
+
+mites <- read.table(data_path, sep = " ", header = TRUE)
+mites$dose <- factor(mites$dose)
+mites$observed_data <- 1
+```
+
+Here is the data visualized:
+```{r, echo = FALSE}
+ggplot(mites, aes(x = factor(dose), y=num_dead)) + geom_dotplot(binaxis='y', stackdir='center',
+               stackratio=1.5, dotsize=0.5) + ggtitle("Dead Mites Per Group by Permethrin Dose") + labs(y = "Dead Mites / 10 Total Mites", x = "Permethrin Dose") + theme_light()
+```
+Here's number of experiments that were done at each doseage.
+```{r, echo = FALSE}
+num_experiments_df <- mites %>% group_by(dose) %>% summarize(number_of_experiments = n())
+num_experiments <- as.vector(num_experiments_df$number_of_experiments)
+print(num_experiments_df)
+```
+
+Run a goodness of fit test on the data.
+```{r, include=FALSE}
+dose_means <- mites %>% group_by(dose) %>% summarize(p_dose = weighted.mean(num_dead/num_mites,num_mites))
+dose_vec <- as.vector(dose_means$dose)
+p_dose <- as.vector(dose_means$p_dose)
+num_dose_level <- length(dose_vec)
+
+chi_sq = 0
+df = 0
+for(d in 1:num_dose_level){
+  loop_df <- mites %>% filter(dose == dose_vec[d])
+  counts <- table(factor(loop_df$num_dead, levels = 0:10))
+  labs <- as.numeric(names(counts))
+  
+  expected_counts <- c()
+  
+  for(l in labs){
+    expected_counts <- c(expected_counts, dbinom(l, size=10, prob=p_dose[d])*num_experiments[d]) 
+  }
+  
+  df = df + length(counts)
+  chi_sq = chi_sq + sum((counts-expected_counts)^2/expected_counts)
+}
+```
+Again, there's not much here.  With `r df` degrees of freedom, a 5% alpha gives us a critical value of `r round(qchisq(.95, df=df-1),3)`, which is far above the calculated chi-squared statistic of `r round(chi_sq,3)` This result provides no evidence aginst the binomial model being an appropriate fit for the data.
+
+Now estimate the means for each dose level from the data.
+```{r, echo = FALSE}
+dose_means <- mites %>% group_by(dose) %>% summarize(p_dose = weighted.mean(num_dead/num_mites,num_mites))
+print(dose_means)
+dose_vec <- as.vector(dose_means$dose)
+p_dose <- as.vector(dose_means$p_dose)
+num_dose_level <- length(dose_vec)
+```
+
+Simulate the dataset.
+```{r, include = FALSE}
+m = 10000
+
+sim_mites_matrix <- function(d, num_experiments, size, p_dose) {
+  
+  # Generate a dataframe of simulated data with the same dimension as the mites dataframe
+  sim_dead <- rbinom(num_experiments[d], size, p_dose[d])
+  
+  loop_df <- as.matrix(cbind(dose = rep(as.numeric(dose_vec[d])), num_mites=rep(size), num_dead = sim_dead))
+}
+
+sim_mites_data <- function(i, num_experiments, size, p_dose, num_dose_level){
+  
+  sim_df <- data.frame(do.call(rbind, lapply(1:num_dose_level, sim_mites_matrix, num_experiments, 10, p_dose)))
+  
+  return(sim_df)
+
+}
+
+sim_data <- lapply(1:m, sim_mites_data, num_experiments = num_experiments, size = 10, p_dose = p_dose, num_dose_level = num_dose_level)
+```
+
+Run two-way anova.
+```{r, include = FALSE}
+two_way_anova <- function(sim_data, obs_data){
+  sim_data$dose <- factor(sim_data$dose)
+  sim_data$observed_data <- 0
+  df <- rbind(sim_data, obs_data)
+  df$observed_data <- factor(df$observed_data)
+  
+  anova_output <- aov(num_dead ~ dose + observed_data, data = df)
+  anova_summary <- summary(anova_output)
+  f_value <- anova_summary[[1]]$`F value`[2]
+  p_value <- anova_summary[[1]]$`Pr(>F)`[2]
+  
+  out_stats <- as.matrix(cbind(f_value, p_value))
+  return(out_stats)
+}
+
+sim_metrics <- data.frame(do.call(rbind, lapply(sim_data, two_way_anova, obs_data = mites)))
+
+p_value_proportion <- nrow(sim_metrics %>% filter(p_value < 0.05))/m
+```
+
+The proportion of the 10,000 p-values that fell below the 0.05 threshold is `r p_value_proportion`.  There is again no evidence here the observed data is poorly described by my model.
+```{r, echo = FALSE}
+ggplot(sim_metrics, aes(x=p_value)) + geom_histogram() + ggtitle("Histogram of Anova P-Values: Comparing Observed and Simulated Data") + labs(x = "P-Value") + theme_light()
+```
+
+Here are the observed and expected variances for each dose level in the data.
+```{r,echo = FALSE}
+dose_mean_var <- mites %>% group_by(dose) %>% summarize(p_obs = mean(num_dead/10), obs_var = var(num_dead)) %>% mutate(expected_variance = 10*p_obs*(1-p_obs))
+print(dose_mean_var)
+```
+
+Again, we run Leveine's test on the 10,000 simulated datasets.
+```{r , include=FALSE}
+two_way_anova_levene <- function(sim_data, obs_data){
+  sim_data$dose <- factor(sim_data$dose)
+  sim_data$observed_data <- 0
+  df <- rbind(sim_data, obs_data)
+  df$observed_data <- factor(df$observed_data)
+  df <- df %>% group_by(dose, observed_data) %>% mutate(abs_diff = abs(num_dead - mean(num_dead)))
+
+  anova_output <- aov(abs_diff ~ dose + observed_data, data = df)
+  anova_summary <- summary(anova_output)
+  f_value <- anova_summary[[1]]$`F value`[2]
+  p_value <- anova_summary[[1]]$`Pr(>F)`[2]
+  
+  out_stats <- as.matrix(cbind(f_value, p_value))
+  return(out_stats)
+}
+
+sim_metrics <- data.frame(do.call(rbind, lapply(sim_data, two_way_anova_levene, obs_data = mites)))
+
+p_value_proportion <- nrow(sim_metrics %>% filter(p_value < 0.05))/m
+```
+
+```{r, echo = FALSE}
+ggplot(sim_metrics, aes(x=p_value)) + geom_histogram() + ggtitle("Histogram of Levene's Test P-Values: Comparing Observed and Simulated Data") + labs(x = "P-Value") + theme_light()
+```
+The proportion of the 10,000 p-values that fell below the 0.05 threshold is `r p_value_proportion`, there appears to be evidence here that  making the assumption that the observed data is distributed binomial conditional on the dose level is invalid.  Note that in the above table comparing the observed and expected variances, there are some large deviations, especially in the 0.5 dose level, where the variance is nearly twice expected.  In the binomial model, the variance is expected to be relatively small when p is near 0 and 1.  Note that the observed variance increases between 2 and 3.  This data does not fit the binomial model I have defined, and it's failure to do so puts into question whether the first dataset really does either.  Perhaps it was just luck that made it look so appropriate.
+
+Again fit the logit model
+```{r, include=FALSE}
+# Create full dataset by_mites with row for each mite from summary dataset mites
+by_mites <- data.frame(mite_id=integer(),
+                 dose=double(),
+                 death_status=logical(),
+                 stringsAsFactors=FALSE)
+mite_id_ticker = 1
+for (row in 1:nrow(mites)) {
+  
+    # Extract information in each row
+    num_mites <- mites[row, "num_mites"]
+    num_dead  <- mites[row, "num_dead"]
+    dose <- mites[row, "dose"]
+    
+    # Create vectors of data based on the number of mites per experiment
+    dead_vec <- !logical(length = num_dead)
+    alive_vec <- logical(length = num_mites - num_dead)
+    death_status_vec <- c(dead_vec, alive_vec)
+    dose_vec <- rep(dose, num_mites)
+    ids <- seq(from = mite_id_ticker, to = mite_id_ticker + num_mites - 1)
+    
+    # Create dataframe from vectors
+    loop_df <- data.frame(mite_id = ids, dose = dose_vec, death_status = death_status_vec)
+    
+    # Append at each iteration to dataframe by_mites
+    by_mites <- rbind(by_mites, loop_df)
+    
+    mite_id_ticker <- mite_id_ticker + num_mites
+}
+
+by_mites$dose <- as.numeric(as.character(by_mites$dose))
+```
+
+
+```{r, echo = FALSE}
+mites_logit_B <- glm(death_status ~ dose, data = by_mites, family = binomial(link = "logit"))
+mites_logit <- mites_logit_B
+print(summary(mites_logit))
+
+pred_x <- seq(0, 4, 0.01)
+pred_y <- predict(mites_logit, list(dose = as.numeric(pred_x)), type="response")
+
+plot(as.numeric(as.character(mites$dose)), mites$num_dead/mites$num_mites, pch = 16, xlab = "Dose", ylab = "Death Status", main = 'Dose-Response Curve: Logit')
+lines(pred_x, pred_y)
+```
+
+c. Estimate the LD50 (the dose at which the probability of death is 50%) and its standard error (SE).
+
+I reasearched for a while on how to estimate the standard error for LD50.  I found it difficult to find an explanation of how to calculate the closed-form solution in that case.  For these reasons, I will estimate LD50 and its standard error via boostrap instead.
+```{r, include=FALSE}
+
+ld50_boot <- function(dat, ind) {
+  d <- dat[ind,]
+  boot_fit <- glm(death_status ~ dose, data = d, family = binomial(link = "probit"))
+  coefs <- coef(boot_fit)
+  return((-coefs[1])/coefs[2])
+} 
+
+ld50_est <- boot(data=by_mites, statistic = ld50_boot, R=1000)
+```
+
+```{r, echo=FALSE}
+print(ld50_est)
+```
+The results of the boostrapping return an an LD50 estimate of 0.68 with a standard error of 0.065966
+
+d. Ultimately, this is data with binary outcomes, so a parametric curve cannot be fit much more accurately than by a logistic or probit regression.  However, the violations of the binomial distribution I have observed mean the estimates of error in the logistic model will be too low.  This should be noted at the very least.  Fitting a curve using a non-parametric method and comparing the errors to the logistic model might be informative to see how great the over-estimation of error is.
+
+f. Assess whether the does-response curves for the two strains are parallel.
+
+To test whether the curves for the two strains are parallel, I run a regression including both datasets, with an indicator variable designating the two strains, and an interaction term.  If the coefficient on the indicator term is significant, this demonstrates that the intercepts are different between the two strains.  If the coefficient on the interaction term is significant, this will indicate a difference in slopes.  As can be seen, there is no significance on the interaction term, and so there is no evidence here that the slopes of the two dose-response curves are different.
+```{r, echo = FALSE}
+by_mites_B <- by_mites
+by_mites_B$strain <- 0
+
+by_mites_all <- rbind(by_mites_A, by_mites_B)
+
+mites_compare <- glm(death_status ~ dose + strain + dose*strain, data = by_mites_all, family = binomial(link = "logit"))
+print(summary(mites_compare))
+```
