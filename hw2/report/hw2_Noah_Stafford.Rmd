@@ -1,0 +1,19 @@
+---
+title: "826 Homework 2"
+author: "Noah Stafford"
+date: "2/26/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include = FALSE}
+# Set working directory
+maait <- read.csv("../data/maait.csv")
+
+# Look at data for possible outliers/dirty stuff
+summary(maait)
+```
+
