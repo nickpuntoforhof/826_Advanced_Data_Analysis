@@ -93,7 +93,7 @@ ggplot(maait_C_quantile_count %>% drop_na(dmouseb_quantile), aes(x = VisitNum, y
 
 Perhaps the inconclusiveness of the primary analysis is less a commentary on the insignificant effect of mouse allergens on asthma, and more a demonstration that educating people on how to get rid of rodents is pretty effecive at getting them to do it themselves.
 
-The next two charts demonstrate the lact of separation between the two groups when you compare them on the outcome variable, number of asthma symptom days in the past two weeks.
+The next two charts demonstrate the lack of separation between the two groups when you compare them on the outcome variable, number of asthma symptom days in the past two weeks.
 ```{r, echo = FALSE}
 maait_C <- maait %>% drop_na(sxsmaxday)
 ggplot(maait_C, aes(x=factor(VisitNum), y=sxsmaxday, fill = group)) + geom_boxplot(width = 0.8) + theme_bw() + labs(x = "Visit Number", y = "Max Symptom Days", fill = "Intervention") + ggtitle("Maximum Symptom Days Across Visit Number by Group") + scale_fill_brewer(palette = "Set2") 
@@ -106,7 +106,7 @@ maait_C <- maait %>% select(ID, VisitNum, group, sxsmaxday) %>% mutate(baseline_
 ggplot(maait_C %>% filter(baseline_bin == 1), aes(x=sxsmaxday_delta, fill = group)) + geom_histogram(binwidth = 1) + theme_bw() + ggtitle("Change in Symptom Days Between Baseline and Follow-Up by Group") + scale_fill_brewer(palette = "Set2") 
 ```
 
-Here is a table to drive the point home, simplifying the above distribution into three bins and comparing the frequencies the data is in eachc bin across the two groups.  There is very little difference in the frequencies.
+Here is a table to drive the point home, simplifying the above distribution into three bins and comparing the frequencies the data is in each bin across the two groups.  There is very little difference in the frequencies.
 ```{r, echo=FALSE}
 maait_C_table <- maait_C %>% filter(baseline_bin == 1) %>% group_by(group) %>% 
   summarize(`Change < 2 Days from Basesline` = round(sum(ifelse(sxsmaxday_delta < -2, 1, 0), na.rm = TRUE)/n(),2),
@@ -125,7 +125,7 @@ ggplot(maait_C_quantiles %>% drop_na(dmouseb_quantile), aes(x = dmouseb_quantile
 
 ggplot(maait_C_quantiles %>% drop_na(dmouseb_quantile), aes(x = dmouseb_quantile, y = acute3mo)) + geom_histogram(stat = "identity") + theme_bw() + ggtitle("Acute Care Visits by Allergen Level Quantile") + labs(x="Quantiles of Bedroom Floor Mouse Allergen Levels", y = "Acute Care Visits in Past 3 Months")
 
-ggplot(maait_C_quantiles %>% drop_na(dmouseb_quantile), aes(x = dmouseb_quantile, y = saba)) + geom_histogram(stat = "identity") + theme_bw() + ggtitle("Beta-agonist Use by Allergen Level Quantile") + labs(x="Quantiles of Bedroom Floor Mouse Allergen Levels", y = "Short-acting Beta-agonist Use")
+ggplot(maait_C_quantiles %>% drop_na(dmouseb_quantile), aes(x = dmouseb_quantile, y = saba)) + geom_histogram(stat = "identity") + theme_bw() + ggtitle("Beta-Agonist Use by Allergen Level Quantile") + labs(x="Quantiles of Bedroom Floor Mouse Allergen Levels", y = "Short-Acting Beta-Agonist Use")
 
 ggplot(maait_C_quantiles %>% drop_na(dmouseb_quantile), aes(x = dmouseb_quantile, y = ed3mo)) + geom_histogram(stat = "identity") + theme_bw() + ggtitle("ED Use by Allergen Level Quantile") + labs(x="Quantiles of Bedroom Floor Mouse Allergen Levels", y = "ED Use in Past 3 Months")
 ```
@@ -210,7 +210,7 @@ maait_stats <- maait_stats %>% gather(stat, value, -group) %>% mutate(variable =
 master_stats<- rbind(master_stats, maait_stats)
 ```
 
-I split the figure up into plotting the medians and plotting the ratios of symptom frequencies separately, becasuse they are different statistics and thus on a different scale.  Since I wanted to do some clean, nifty multi-plots it was much simpler to split these plots into two.  Next, I wanted to prioriztize the comparision between groups of each statistic and their IQRs.  To do this, each median should be plotted side-by-side with the other median of the same variable from the other group.  To keep things clean, I used the faced_wrap() function to split the plot into subplots per variable.  This condensed the y-axis some but not to a point where information is obscured.  The main disadvantage of this plot is that you can't compare the magnitude of each statistic across variables easily.  I tried to put all the plots in one row but the labels got all cut off.  In a context where more width is allowed having one row is the best option.  I opted to make the median bars red and the IQR bars black and smaller to emphasize the importance of the medians. 
+I split the figure up into plotting the medians and plotting the ratios of symptom frequencies separately, becasuse they are different statistics and thus on a different scale.  Since I wanted to do some clean, nifty multi-plots it was much simpler to do these plots separately.  Next, I wanted to prioriztize the comparison between groups of each statistic and their IQRs.  To do this, each median should be plotted side-by-side with the other median of the same variable from the other group.  To keep things clean, I used the faced_wrap() function to split the plot into subplots per variable.  This condensed the y-axis some but not to a point where information is obscured.  The main disadvantage of this plot is that you can't compare the magnitude of each statistic across variables easily.  I tried to put all the plots in one row but the labels got cut off.  In a context where more width is allowed having one row is the best option.  I opted to make the median bars red and the IQR bars black and smaller than the median bars to emphasize the importance of the medians. 
 
 The plot of the ratios is much the same, except the data was not split on the experimental groups anymore, so there was no reason to take that into account, and the layout could be simplified.
 
