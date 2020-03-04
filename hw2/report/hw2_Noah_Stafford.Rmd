@@ -6,14 +6,319 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='Figs/',
+                      echo=FALSE, warning=FALSE, message=FALSE)
 ```
 
 ```{r, include = FALSE}
-# Set working directory
-maait <- read.csv("../data/maait.csv")
+# Load packages
+library(tidyverse)
+library(gee)
+library(gtools)
+library(gridExtra)
 
-# Look at data for possible outliers/dirty stuff
-summary(maait)
+
+# Set working directory
+maait <- read.csv("../data/maait.csv", stringsAsFactors = FALSE)
+maait$group <- factor(maait$group)
+maait$ID <- factor(maait$ID)
+
+```
+
+## A.
+
+To replicate the first row of table 2, the variables in the model need to be located.  We need the subject, visit number, randomization group, and symptom days over a two-week period.  According to the code book, these variables are coded as:
+
+* ID -- Unique identifier -- 5 digit number
+* VisitNum -- visit number -- 0: baseline ; 1: 3month; 2: 6month ; 3: 9month ; 4: 12month
+* group -- randomization group -- 'Education', 'IPM'
+* sxsmaxday -- maximum symptom days of 3 symptom counts: general, slowed, nightcnt - [0-14]
+
+```{r, echo=FALSE}
+# Calculate median and IQR on mean response for each patiant across 6, 9, 12 month measurements
+maait %>% filter(VisitNum > 1) %>% group_by(group, ID) %>% 
+  summarize(mean_sxsmaxday = mean(sxsmaxday, na.rm = TRUE)) %>% ungroup() %>% group_by(group) %>% 
+  summarize(`Maximal symptom days/2 wk median`= round(median(mean_sxsmaxday, na.rm = TRUE),1),
+            `25% IQR`= round(quantile(mean_sxsmaxday, 0.25, na.rm = TRUE),1),
+            `75% IQR`= round(quantile(mean_sxsmaxday, 0.75, na.rm = TRUE),1))
+```
+
+```{r, include=FALSE}
+maait_A <- maait %>% filter(VisitNum > 1)
+out <- with(maait_A, gee(sxsmaxday ~ group, id=ID, family=poisson(link=log), corstr="exchangeable"))
+out_coef <- summary(out)[7][[1]]
+b1 <- out_coef[2,1]
+b1_se <- out_coef[2,4]
+```
+
+```{r, echo=FALSE}
+print("Ratio of Symptom Frequencies")
+round(exp(b1),2)
+print("95% Confidence Interval")
+print(paste0(round(exp(b1-1.96*b1_se),2), " to ", round(exp(b1+1.96*b1_se),2)))
+```
+
+# B.
+
+```{r, include=FALSE}
+maait_B <- maait %>% filter(VisitNum > 1) %>% group_by(group, ID) %>% 
+  summarize(sxsmaxday_sum = sum(sxsmaxday)) %>% drop_na(sxsmaxday_sum)
+```
+
+```{r, include = FALSE}
+out <- glm(sxsmaxday_sum ~ group, family=quasipoisson(link=log), data = maait_B)
+out_summary <- summary(out)
+b1 <- out_summary$coefficients[2,1]
+b1_se <- out_summary$coefficients[2,2]
+```
+
+```{r, echo=FALSE}
+print("Ratio of Symptom Frequencies")
+round(exp(b1),2)
+print("95% Confidence Interval")
+print(paste0(round(exp(b1-1.96*b1_se),2), " to ", round(exp(b1+1.96*b1_se),2)))
+```
+
+# C.
+
+From reading the paper, I found that the main analysis left resulted in an unsatisfactory conclusion, while the exploratory analysis demonstrated that the effect the investigators were looking for likely exists -- finding it was just elusive due to how the study was designed and due to the high reduction in allergens in the environment among the education only group.
+
+To outline this issue, I binned the bedroom mouse allergen data into percentiles (based on the distribution of this variable across the entire data set), and then plotted a percent stacked barplot comparing the distribution of the percentiles of bedroom mouse allergen for each visit number between the experimental groups.  As can be seen, there was a similar reduction in allergen levels across both groups, though the reduction in the IPM group appears to be somewhat larger.  
+```{r, echo = FALSE}
+maait_C_quantiles <- maait %>% select(VisitNum, dmouseb, sxsmaxday, saba, acute3mo, ed3mo, group) %>% mutate(dmouseb_quantile = quantcut(dmouseb, q=5, na.rm = TRUE))
+maait_C_quantile_count  <- maait_C_quantiles %>% group_by(dmouseb_quantile, VisitNum, group) %>% summarize(n = n())
+
+ggplot(maait_C_quantile_count %>% drop_na(dmouseb_quantile), aes(x = VisitNum, y = n, fill = factor(dmouseb_quantile))) + geom_bar(stat = "identity", position = "fill") + theme_bw() + ggtitle("Distribution of Allergen Level Quantile Within Each Visit") + labs(x="Visit Number", y = "% of Visits With Allergen Level within Quantile", fill = "Quantiles of Bedroom \nFloor Mouse \nAllergen Levels") + scale_fill_brewer(palette = "Set2") + facet_grid(~group)
+```
+
+Perhaps the inconclusiveness of the primary analysis is less a commentary on the insignificant effect of mouse allergens on asthma, and more a demonstration that educating people on how to get rid of rodents is pretty effecive at getting them to do it themselves.
+
+The next two charts demonstrate the lact of separation between the two groups when you compare them on the outcome variable, number of asthma symptom days in the past two weeks.
+```{r, echo = FALSE}
+maait_C <- maait %>% drop_na(sxsmaxday)
+ggplot(maait_C, aes(x=factor(VisitNum), y=sxsmaxday, fill = group)) + geom_boxplot(width = 0.8) + theme_bw() + labs(x = "Visit Number", y = "Max Symptom Days", fill = "Intervention") + ggtitle("Maximum Symptom Days Across Visit Number by Group") + scale_fill_brewer(palette = "Set2") 
+```
+
+Here, I looked to visualize the data by patient.  I binned the data into baseline (visits 0 and 1), and follow-up (visits 2,3,4).  I calculated the mean symptom days within each of these two groups, and took their difference.  This adjusts within each patient for pre-existing asthma conditions.  If either of the groups contributed to a decrease, or prevented an increase in asthma symptom days, the peaks of the histograms should be offset.  In short, they are not.
+```{r, echo=FALSE}
+maait_C <- maait %>% select(ID, VisitNum, group, sxsmaxday) %>% mutate(baseline_bin = ifelse(VisitNum > 1, 0, 1)) %>% group_by(ID, group, baseline_bin) %>% summarize(sxsmaxday = mean(sxsmaxday, na.rm = TRUE)) %>% arrange(ID, baseline_bin) %>% mutate(sxsmaxday_delta = sxsmaxday - first(sxsmaxday))
+
+ggplot(maait_C %>% filter(baseline_bin == 1), aes(x=sxsmaxday_delta, fill = group)) + geom_histogram(binwidth = 1) + theme_bw() + ggtitle("Change in Symptom Days Between Baseline and Follow-Up by Group") + scale_fill_brewer(palette = "Set2") 
+```
+
+Here is a table to drive the point home, simplifying the above distribution into three bins and comparing the frequencies the data is in eachc bin across the two groups.  There is very little difference in the frequencies.
+```{r, echo=FALSE}
+maait_C_table <- maait_C %>% filter(baseline_bin == 1) %>% group_by(group) %>% 
+  summarize(`Change < 2 Days from Basesline` = round(sum(ifelse(sxsmaxday_delta < -2, 1, 0), na.rm = TRUE)/n(),2),
+            `Change Within 2 Days of Basesline` = round(sum(ifelse(abs(sxsmaxday_delta) <= 2, 1, 0), na.rm = TRUE)/n(),2),
+           `Change > 2 Days from Basesline` = round(sum(ifelse(sxsmaxday_delta > 2, 1, 0), na.rm = TRUE)/n(),2),)
+
+maait_C_table
+```
+
+What I found interesting about this paper were the results of the exploratory analysis.  While the two groups did not have much separation in the amount of bedroom mouse allergen levels at any given time point, if we ignore the timepoints, throw out the groups and the individual effects, just looking at health outcomes as compared to allergen levels, there is a clear relationship between each them.  Health outcomes worsen as allergen levels increase.
+
+```{r, echo=FALSE}
+maait_C_quantiles <- maait %>% select(VisitNum, dmouseb, sxsmaxday, saba, acute3mo, ed3mo, group) %>% mutate(dmouseb_quantile = quantcut(dmouseb, q=5, na.rm = TRUE))
+
+ggplot(maait_C_quantiles %>% drop_na(dmouseb_quantile), aes(x = dmouseb_quantile, y = sxsmaxday)) + geom_violin() + geom_boxplot(width=0.1) + theme_bw() + ggtitle("Distribution of Symptom Days by Allergen Level Quantiles") + labs(x="Quantiles of Bedroom Floor Mouse Allergen Levels", y = "Max Symptom Days")
+
+ggplot(maait_C_quantiles %>% drop_na(dmouseb_quantile), aes(x = dmouseb_quantile, y = acute3mo)) + geom_histogram(stat = "identity") + theme_bw() + ggtitle("Acute Care Visits by Allergen Level Quantile") + labs(x="Quantiles of Bedroom Floor Mouse Allergen Levels", y = "Acute Care Visits in Past 3 Months")
+
+ggplot(maait_C_quantiles %>% drop_na(dmouseb_quantile), aes(x = dmouseb_quantile, y = saba)) + geom_histogram(stat = "identity") + theme_bw() + ggtitle("Beta-agonist Use by Allergen Level Quantile") + labs(x="Quantiles of Bedroom Floor Mouse Allergen Levels", y = "Short-acting Beta-agonist Use")
+
+ggplot(maait_C_quantiles %>% drop_na(dmouseb_quantile), aes(x = dmouseb_quantile, y = ed3mo)) + geom_histogram(stat = "identity") + theme_bw() + ggtitle("ED Use by Allergen Level Quantile") + labs(x="Quantiles of Bedroom Floor Mouse Allergen Levels", y = "ED Use in Past 3 Months")
+```
+
+No conclusive statements can be made about these effects, as time and individual effects are being ignored, and these is no randomization when looking at the data this way, so many unknown covariates could be the actual cause of these trends. But these trends demonstrate that there is possibly an association here, and the issue warrants more investigation through a better-designed or more focused study.
+
+# D.
+
+```{r, include=FALSE}
+# Calculate median and IQR on mean response for each patiant across 6, 9, 12 month measurements
+
+# sxsmaxday
+maait_stats <- maait %>% filter(VisitNum > 1) %>% group_by(group, ID) %>% 
+  summarize(mean_stat = mean(sxsmaxday, na.rm = TRUE)) %>% ungroup() %>% group_by(group) %>% 
+  summarize(`Median`= round(median(mean_stat, na.rm = TRUE),1),
+            `25% IQR`= round(quantile(mean_stat, 0.25, na.rm = TRUE),1),
+            `75% IQR`= round(quantile(mean_stat, 0.75, na.rm = TRUE),1))
+maait_stats <- maait_stats %>% gather(stat, value, -group) %>% mutate(variable = "Max Symptom Days")
+master_stats <- maait_stats
+
+# sxsgeneral
+maait_stats <- maait %>% filter(VisitNum > 1) %>% group_by(group, ID) %>% 
+  summarize(mean_stat = mean(sxsgeneral, na.rm = TRUE)) %>% ungroup() %>% group_by(group) %>% 
+  summarize(`Median`= round(median(mean_stat, na.rm = TRUE),1),
+            `25% IQR`= round(quantile(mean_stat, 0.25, na.rm = TRUE),1),
+            `75% IQR`= round(quantile(mean_stat, 0.75, na.rm = TRUE),1))
+maait_stats <- maait_stats %>% gather(stat, value, -group) %>% mutate(variable = "Any Symptoms")
+master_stats<- rbind(master_stats, maait_stats)
+
+# sxsslowed
+maait_stats <- maait %>% filter(VisitNum > 1) %>% group_by(group, ID) %>% 
+  summarize(mean_stat = mean(sxsslowed, na.rm = TRUE)) %>% ungroup() %>% group_by(group) %>% 
+  summarize(`Median`= round(median(mean_stat, na.rm = TRUE),1),
+            `25% IQR`= round(quantile(mean_stat, 0.25, na.rm = TRUE),1),
+            `75% IQR`= round(quantile(mean_stat, 0.75, na.rm = TRUE),1))
+maait_stats <- maait_stats %>% gather(stat, value, -group) %>% mutate(variable = "Slowed Activity")
+master_stats<- rbind(master_stats, maait_stats)
+
+# sxsnightcnt
+maait_stats <- maait %>% filter(VisitNum > 1) %>% group_by(group, ID) %>% 
+  summarize(mean_stat = mean(sxsnightcnt, na.rm = TRUE)) %>% ungroup() %>% group_by(group) %>% 
+  summarize(`Median`= round(median(mean_stat, na.rm = TRUE),1),
+            `25% IQR`= round(quantile(mean_stat, 0.25, na.rm = TRUE),1),
+            `75% IQR`= round(quantile(mean_stat, 0.75, na.rm = TRUE),1))
+maait_stats <- maait_stats %>% gather(stat, value, -group) %>% mutate(variable = "Nocturnal Wakening")
+master_stats<- rbind(master_stats, maait_stats)
+
+# sxscoughcnt
+maait_stats <- maait %>% filter(VisitNum > 1) %>% group_by(group, ID) %>% 
+  summarize(mean_stat = mean(sxscoughcnt, na.rm = TRUE)) %>% ungroup() %>% group_by(group) %>% 
+  summarize(`Median`= round(median(mean_stat, na.rm = TRUE),1),
+            `25% IQR`= round(quantile(mean_stat, 0.25, na.rm = TRUE),1),
+            `75% IQR`= round(quantile(mean_stat, 0.75, na.rm = TRUE),1))
+maait_stats <- maait_stats %>% gather(stat, value, -group) %>% mutate(variable = "Coughing w/o Cold")
+master_stats<- rbind(master_stats, maait_stats)
+
+# sxsruncnt
+maait_stats <- maait %>% filter(VisitNum > 1) %>% group_by(group, ID) %>% 
+  summarize(mean_stat = mean(sxsruncnt, na.rm = TRUE)) %>% ungroup() %>% group_by(group) %>% 
+  summarize(`Median`= round(median(mean_stat, na.rm = TRUE),1),
+            `25% IQR`= round(quantile(mean_stat, 0.25, na.rm = TRUE),1),
+            `75% IQR`= round(quantile(mean_stat, 0.75, na.rm = TRUE),1))
+maait_stats <- maait_stats %>% gather(stat, value, -group) %>% mutate(variable = "Exercise-Related Symptoms")
+master_stats<- rbind(master_stats, maait_stats)
+
+# sxsspeech
+maait_stats <- maait %>% filter(VisitNum > 1) %>% group_by(group, ID) %>% 
+  summarize(mean_stat = mean(sxsspeech, na.rm = TRUE)) %>% ungroup() %>% group_by(group) %>% 
+  summarize(`Median`= round(median(mean_stat, na.rm = TRUE),1),
+            `25% IQR`= round(quantile(mean_stat, 0.25, na.rm = TRUE),1),
+            `75% IQR`= round(quantile(mean_stat, 0.75, na.rm = TRUE),1))
+maait_stats <- maait_stats %>% gather(stat, value, -group) %>% mutate(variable = "Coun't Speak, SOB")
+master_stats<- rbind(master_stats, maait_stats)
+
+# saba
+maait_stats <- maait %>% filter(VisitNum > 1) %>% group_by(group, ID) %>% 
+  summarize(mean_stat = mean(sabadays, na.rm = TRUE)) %>% ungroup() %>% group_by(group) %>% 
+  summarize(`Median`= round(median(mean_stat, na.rm = TRUE),1),
+            `25% IQR`= round(quantile(mean_stat, 0.25, na.rm = TRUE),1),
+            `75% IQR`= round(quantile(mean_stat, 0.75, na.rm = TRUE),1))
+maait_stats <- maait_stats %>% gather(stat, value, -group) %>% mutate(variable = "Beta-Agonist Use")
+master_stats<- rbind(master_stats, maait_stats)
+```
+
+I split the figure up into plotting the medians and plotting the ratios of symptom frequencies separately, becasuse they are different statistics and thus on a different scale.  Since I wanted to do some clean, nifty multi-plots it was much simpler to split these plots into two.  Next, I wanted to prioriztize the comparision between groups of each statistic and their IQRs.  To do this, each median should be plotted side-by-side with the other median of the same variable from the other group.  To keep things clean, I used the faced_wrap() function to split the plot into subplots per variable.  This condensed the y-axis some but not to a point where information is obscured.  The main disadvantage of this plot is that you can't compare the magnitude of each statistic across variables easily.  I tried to put all the plots in one row but the labels got all cut off.  In a context where more width is allowed having one row is the best option.  I opted to make the median bars red and the IQR bars black and smaller to emphasize the importance of the medians. 
+
+The plot of the ratios is much the same, except the data was not split on the experimental groups anymore, so there was no reason to take that into account, and the layout could be simplified.
+
+I usually change the ggplot theme because I think the default one looks kinda crappy.
+```{r, echo = FALSE}
+master_stats$variable <- factor(master_stats$variable)
+master_stats$group <- factor(master_stats$group)
+
+ggplot(master_stats) + geom_point(data = master_stats %>% filter(stat=="Median"), aes(x = group, y = value), shape = 95, size = 10, color = 'red') + geom_point(data = master_stats %>% filter(stat=="25% IQR"), aes(x = group, y = value), shape = 95, size = 4, color = 'black') + geom_point(data = master_stats %>% filter(stat=="75% IQR"), aes(x = group, y = value),shape = 95, size = 4, color = 'black') + facet_wrap(vars(variable), nrow=2) + ggtitle("Median and IQR Values for Primary and Secondary Outcomes") + theme_bw() + labs(x = "Experimental Group", y = "Days with Symptoms in Past 2 Weeks")
+
+```
+
+
+```{r, include=FALSE}
+maait_A <- maait %>% filter(VisitNum > 1)
+
+variable_name <- "Max Symptom Days"
+out <- with(maait_A, gee(sxsmaxday ~ group, id=ID, family=poisson(link=log), corstr="exchangeable"))
+out_coef <- summary(out)[7][[1]]
+b1 <- out_coef[2,1]
+b1_se <- out_coef[2,4]
+b1_iqr_low <- exp(b1-1.96*b1_se)
+b1_iqr_high <- exp(b1+1.96*b1_se)
+
+final_stats <- data.frame(variable = rep(variable_name,3), stat=c('ratio','IQR_low', 'IQR_high'), value = c(exp(b1),b1_iqr_low,b1_iqr_high))
+
+variable_name <- "Any Symptoms"
+out <- with(maait_A, gee(sxsgeneral ~ group, id=ID, family=poisson(link=log), corstr="exchangeable"))
+out_coef <- summary(out)[7][[1]]
+b1 <- out_coef[2,1]
+b1_se <- out_coef[2,4]
+b1_iqr_low <- exp(b1-1.96*b1_se)
+b1_iqr_high <- exp(b1+1.96*b1_se)
+
+temp_stats <- data.frame(variable = rep(variable_name,3), stat=c('ratio','IQR_low', 'IQR_high'), value = c(exp(b1),b1_iqr_low,b1_iqr_high))
+final_stats <- rbind(final_stats, temp_stats)
+
+variable_name <- "Slowed Activity"
+out <- with(maait_A, gee(sxsslowed ~ group, id=ID, family=poisson(link=log), corstr="exchangeable"))
+out_coef <- summary(out)[7][[1]]
+b1 <- out_coef[2,1]
+b1_se <- out_coef[2,4]
+b1_iqr_low <- exp(b1-1.96*b1_se)
+b1_iqr_high <- exp(b1+1.96*b1_se)
+
+temp_stats <- data.frame(variable = rep(variable_name,3), stat=c('ratio','IQR_low', 'IQR_high'), value = c(exp(b1),b1_iqr_low,b1_iqr_high))
+final_stats <- rbind(final_stats, temp_stats)
+
+variable_name <- "Nocturnal Wakening"
+out <- with(maait_A, gee(sxsnightcnt ~ group, id=ID, family=poisson(link=log), corstr="exchangeable"))
+out_coef <- summary(out)[7][[1]]
+b1 <- out_coef[2,1]
+b1_se <- out_coef[2,4]
+b1_iqr_low <- exp(b1-1.96*b1_se)
+b1_iqr_high <- exp(b1+1.96*b1_se)
+
+temp_stats <- data.frame(variable = rep(variable_name,3), stat=c('ratio','IQR_low', 'IQR_high'), value = c(exp(b1),b1_iqr_low,b1_iqr_high))
+final_stats <- rbind(final_stats, temp_stats)
+
+variable_name <- "Coughing w/o Cold"
+out <- with(maait_A, gee(sxscoughcnt ~ group, id=ID, family=poisson(link=log), corstr="exchangeable"))
+out_coef <- summary(out)[7][[1]]
+b1 <- out_coef[2,1]
+b1_se <- out_coef[2,4]
+b1_iqr_low <- exp(b1-1.96*b1_se)
+b1_iqr_high <- exp(b1+1.96*b1_se)
+
+temp_stats <- data.frame(variable = rep(variable_name,3), stat=c('ratio','IQR_low', 'IQR_high'), value = c(exp(b1),b1_iqr_low,b1_iqr_high))
+final_stats <- rbind(final_stats, temp_stats)
+
+variable_name <- "Exercise-Related Symptoms"
+out <- with(maait_A, gee(sxsruncnt ~ group, id=ID, family=poisson(link=log), corstr="exchangeable"))
+out_coef <- summary(out)[7][[1]]
+b1 <- out_coef[2,1]
+b1_se <- out_coef[2,4]
+b1_iqr_low <- exp(b1-1.96*b1_se)
+b1_iqr_high <- exp(b1+1.96*b1_se)
+
+temp_stats <- data.frame(variable = rep(variable_name,3), stat=c('ratio','IQR_low', 'IQR_high'), value = c(exp(b1),b1_iqr_low,b1_iqr_high))
+final_stats <- rbind(final_stats, temp_stats)
+
+variable_name <- "Coun't Speak, SOB"
+out <- with(maait_A, gee(sxsspeech ~ group, id=ID, family=poisson(link=log), corstr="exchangeable"))
+out_coef <- summary(out)[7][[1]]
+b1 <- out_coef[2,1]
+b1_se <- out_coef[2,4]
+b1_iqr_low <- exp(b1-1.96*b1_se)
+b1_iqr_high <- exp(b1+1.96*b1_se)
+
+temp_stats <- data.frame(variable = rep(variable_name,3), stat=c('ratio','IQR_low', 'IQR_high'), value = c(exp(b1),b1_iqr_low,b1_iqr_high))
+final_stats <- rbind(final_stats, temp_stats)
+
+variable_name <- "Beta-Agonist Use"
+out <- with(maait_A, gee(sabadays ~ group, id=ID, family=poisson(link=log), corstr="exchangeable"))
+out_coef <- summary(out)[7][[1]]
+b1 <- out_coef[2,1]
+b1_se <- out_coef[2,4]
+b1_iqr_low <- exp(b1-1.96*b1_se)
+b1_iqr_high <- exp(b1+1.96*b1_se)
+
+temp_stats <- data.frame(variable = rep(variable_name,3), stat=c('ratio','IQR_low', 'IQR_high'), value = c(exp(b1),b1_iqr_low,b1_iqr_high))
+final_stats <- rbind(final_stats, temp_stats)
+
+```
+
+```{r, echo = FALSE}
+final_stats$variable <- factor(final_stats$variable)
+
+ggplot(final_stats) + geom_point(data = final_stats %>% filter(stat=="ratio"), aes(x = variable, y = value), shape = 95, size = 10, color = 'red') + geom_point(data = final_stats %>% filter(stat=="IQR_low"), aes(x = variable, y = value), shape = 95, size = 4, color = 'black') + geom_point(data = final_stats %>% filter(stat=="IQR_high"), aes(x = variable, y = value),shape = 95, size = 4, color = 'black') + ggtitle("Ratio of Symptom Frequencis with 95% CI") + theme_bw() + labs(x = "Experimental Group", y = "Ratio of Symptom Frequencies") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
