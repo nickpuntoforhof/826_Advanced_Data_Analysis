@@ -1,0 +1,91 @@
+---
+title: "Homework 3 Report Part 2"
+output: html_notebook
+author: Noah Stafford
+---
+
+## Data Diagonistics
+
+```{r, include = FALSE}
+library(tidyverse)
+library(purrr)
+load("C:/Users/woody/Google Drive/github_repos/826_Advanced_Data_Analysis/hw3/cleanData/immunoassay.RData")
+```
+
+Let's look at the two sex variables, which were provided in the complete_f2 and pheno_lipomics datasets.  Here is a cross-tabluation of those two variables.
+```{r, echo=FALSE}
+table(immunoassay$sex_f2, immunoassay$sex_pl)
+```
+We see there are two mice that have inconsistent labels.
+```{r, echo=FALSE}
+immunoassay %>% filter(immunoassay$sex_f2 == 'M' & immunoassay$sex_pl == "F") %>% select(mouse_id, sex_f2, sex_pl)
+```
+From the data, we can see these mice are two mice with sequential mouse ids, pointing towards a data entry error.
+
+```{r}
+hist(immunoassay$`Body Weight`)
+hist(immunoassay$`Weight(mg)`)
+```
+
+
+Now, let's check for extreme outliers.  
+
+My first instinct was to apply a threshold, for example 2*IQR, and simply report observations that lay outside of that range.  The issue I ran into, is that many of these variables have very skewed distributions.  A variable such as EGF (Epidermal Growth Factor) will always report a lot of outliers because it is so left skewed.
+
+```{r, echo = FALSE}
+hist(immunoassay$`EGF (Epidermal Growth Factor)`)
+```
+
+This makes any one-size fits all analysis for finding outliers difficult.  
+
+```{r}
+hist(immunoassay$`Weight(mg)`)
+```
+
+Bodies should not be getting shorter.  From this table it appears that there was some change in measurements between week 8 and week 10.
+```{r, echo=FALSE}
+body_length_change <- immunoassay %>% group_by(mouse_id) %>% summarize(length_4_6_wk = `6 wk Orbital Eye Bleed BODY LENGTH (cm)` - `4 wk Orbital Eye Bleed BODY LENGTH (cm)`,
+                                                 length_6_8_wk = `8 wk Orbital Eye Bleed BODY LENGTH (cm)` - `6 wk Orbital Eye Bleed BODY LENGTH (cm)`,
+                                                 length_8_10_wk = `10 wk Orbital Eye Bleed BODY LENGTH (cm)` - `8 wk Orbital Eye Bleed BODY LENGTH (cm)`)
+print(body_length_change)
+```
+
+
+```{r}
+class_vector <- sapply(immunoassay,class)
+numeric_class_vector <- class_vector[class_vector == "numeric"]
+numeric_class_vector <- numeric_class_vector[c(-1,-81)]
+numeric_class_names <- names(numeric_class_vector)
+```
+
+```{r}
+outlier_count <- rep(0,nrow(immunoassay))
+for (column in numeric_class_names){
+  print(column)
+  d <- immunoassay %>% select('mouse_id', column)
+  med <- round(median(d[,2], na.rm=TRUE),2)
+  quartile_25 <- round(quantile(d[,2], 0.25, na.rm=TRUE),2)
+  quartile_75 <- round(quantile(d[,2], 0.75, na.rm=TRUE),2)
+  iqr <- quartile_75 - quartile_25
+  iqr_outlier <- iqr*10
+  upper_thr <- round(med + 0.5*iqr_outlier,2)
+  lower_thr <- round(med - 0.5*iqr_outlier,2)
+  print(paste0('Median: ', med, " 25th Quartile: ", quartile_25, " 75th quartile: ", quartile_75, " Outlier Threshold: ", lower_thr, ", ", upper_thr))
+  d$outlier <- ifelse(upper_thr < d[,2] | lower_thr > d[,2] , TRUE, FALSE)
+  d <- d %>% filter(outlier == TRUE)
+  print(nrow(d))
+  #for (id in d$mouse_id){
+  #  print(id)
+  #}
+}
+```
+
+```{r}
+immunoassay %>% select_if(is.numeric) %>% map(~ifelse(3*sd(., na.rm = TRUE) < abs(.), TRUE, FALSE))
+```
+
+
+```{r}
+hist(immunoassay$`EGF (Epidermal Growth Factor)`)
+```
+
