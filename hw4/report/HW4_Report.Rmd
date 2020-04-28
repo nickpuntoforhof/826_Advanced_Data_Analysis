@@ -1,7 +1,9 @@
 ---
 title: "BMI 826 - Homework 4"
-output: html_notebook
 author: "Noah Stafford"
+output:
+  html_document:
+    df_print: paged
 ---
 
 ```{r knitr_options , include=FALSE}
@@ -243,4 +245,4 @@ for(c in 1:ncol(testset)){
 names(importance) <- colnames(testset)
 print(round(importance,3))
 ```
-These numbers can be roughly interpreted as the average absolute error of the predictions, consider the given variable had been perturbed. Not a whole not can be said here -- it can be observed age is clearly the most important variable. 
+These numbers can be roughly interpreted as the average absolute error of the predictions, consider the given variable had been perturbed. Not a whole lot can be said here -- it can be observed age is clearly the most important variable.  It can also be said though, that the similar importance of most of the variables points towards why SVMs are difficult to interpret.
