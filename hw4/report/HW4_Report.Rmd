@@ -24,6 +24,7 @@ library(ROCR)
 library(BBmisc)
 library(rminer)
 library(caret)
+library(fastDummies)
 ```
 
 # Data Wrangling
@@ -114,7 +115,10 @@ fit_data$smoker_na <- ifelse(is.na(nh_diab$age_smoking), 1, 0)
 fit_data$smoker_yes <- ifelse(nh_diab$age_smoking > 0 & !is.na(nh_diab$age_smoking), 1, 0)
 fit_data$age_smoking <- ifelse(is.na(nh_diab$age_smoking), 0, nh_diab$age_smoking)
 
-fit_data <- fit_data[,-1]
+race_cols <- dummy_cols(fit_data$race)
+colnames(race_cols) <- c("race","race_mex_amer","race_other_hisp","race_white","race_black","race_other")
+fit_data <- cbind(fit_data, race_cols[,-1])
+fit_data <- fit_data %>% select(-id, -race)
 ```
 
 # Machine Learning Pipeline
@@ -126,17 +130,15 @@ index <- 1:nrow(fit_data)
 testindex <- sample(index, trunc(length(index)/3))
 testset <- fit_data[testindex,]
 trainset <- fit_data[-testindex,]
-
 ```
 
-
+To get a sense of the relationship between the covariates that could be in the model, let's check out the correlation matrix of the data:
 ```{r, echo=FALSE}
 data.frame(cor(fit_data))
 ```
 Examining the correlations between variables, we see there is a high correlation between height and upper_leg_length, and weist and weight, thought not much else.  I think it is safe to leave all variables in the model -- even with the high correlation between a couple of the covariates, with our sample size dimensionality issues are not particularly a concern, and there are perhaps non-linear relationships between any of the correlated covariates and the reponse variable that might help improve the model.
 
-First, let's do a grid search across the hyperparameter space, getting the mean of AUCs from models fit using 10-fold cross validation on each parameter setting.  The grid search will be across an exponential grid from 10^-2 to 10^5.  
-
+First, let's do a grid search across the hyperparameter space, getting the mean of AUCs from models fit using 10-fold cross validation on each parameter setting.  The grid search will be across an exponential grid from 10^-2 to 10^5.
 ```{r, include = FALSE}
 file_bool <- file.exists("../Robjects/cv_list.Rdata")
 if(file_bool == TRUE){
@@ -144,30 +146,30 @@ if(file_bool == TRUE){
   load("../Robjects/cv_list.Rdata")
   
 } else {
-  gamma_range <- 10^(-2:5)
-  cost_range <- 10^(-2:5)
+  gamma_range <- 10^(-2:3)
+  cost_range <- 10^(-2:3)
   
   flds <- createFolds(trainset$diabetic, k = 10, list = TRUE, returnTrain = FALSE)
   
   cv_auc <- list()
   for(g in 1:length(gamma_range)){
     for(c in 1:length(cost_range)){
-      hyper_setting <- paste0("gamma: ", gamma, " cost: ", cost)
-      auc_vec <- c()
-      for(f in 1:10){
-      start_time <- Sys.time()
+      
       gamma <- gamma_range[g]
       cost <- cost_range[c]
+      hyper_setting <- paste0("gamma: ", gamma, " cost: ", cost)
+      auc_vec <- c()
+      
+      for(f in 1:10){
+      print(paste0("Fold ", f))
+      start_time <- Sys.time()
       trainset_fold <- trainset[flds[[f]],]
       testset_fold <- trainset[-flds[[f]],]
       print(hyper_setting)
       print(paste0(nrow(trainset_fold), " ", nrow(testset_fold)))
-      svm.fold.model <- svm(diabetic ~ ., data = trainset_fold, cost = cost, gamma = gamma, 
-                            type = "C-classification", probability = TRUE)
-      
-      svm.pred <- predict(svm.fold.model, testset_fold[,-16], probability = TRUE)
-      svm.probs <- attr(svm.pred, "probabilities")
-      pr <-prediction(svm.probs[,1], testset_fold$diabetic)
+      svm.fold.model <- svm(diabetic ~ ., data = trainset_fold, cost = cost, gamma = gamma)
+      svm.pred <- predict(svm.fold.model, testset_fold[,-15])
+      pr <-prediction(svm.pred, testset_fold$diabetic)
       auc <- performance(pr, measure = "auc")@y.values[[1]]
       auc_vec <- c(auc_vec, auc)
       
@@ -179,23 +181,22 @@ if(file_bool == TRUE){
       cv_auc[[hyper_setting]] <- mean(auc_vec)
     }
   }
+  save(cv_auc, file = "../Robjects/cv_list.Rdata")
 }
 ```
 
 
 The max AUC from the parameters searched is `r round(max(unlist(cv_auc)), 3)`, which was attained with the hyperparameter setting gamma = 0.01, cost = 0.01.  Now, let's fit the SVM on the entire training set and see how it performs on the test data.
-
 ```{r, include = FALSE}
 gamma <- 0.01
 cost <- 0.01
-svm.model <- svm(diabetic ~ ., data = trainset, cost = cost, gamma = gamma, type = "C-classification", probability=TRUE)
-svm.pred <- predict(svm.model, testset[,-16], probability = TRUE)
-svm.probs <- attr(svm.pred, "probabilities")
+svm.model <- svm(diabetic ~ ., data = trainset, cost = cost, gamma = gamma)
+svm.pred <- predict(svm.model, testset[,-15])
 ```
 
 
 ```{r, echo = FALSE}
-pr <- prediction(svm.probs[,1], testset$diabetic)
+pr <- prediction(svm.pred, testset$diabetic)
 prf <- performance(pr, measure="tpr",x.measure="fpr")
 plot(prf, main="SVM ROC Curve")
 lines(x = c(0,1), y = c(0,1),col="blue")
@@ -213,36 +214,42 @@ print(opt.cut(prf, pr))
 print(paste0("AUC    ", performance(pr, measure = "auc")@y.values[[1]]))
 ```
 
-While using a model like a support vector machine can lead to the superior classification performance compared to more interpretable models, it is known to be a black box algorithm.  A way to evaluate how important each of the variables are is to perturb each observation, and see how much the loss function changes whent this is done.  Average the change in loss for each variable and each observation -- this gives an estimate of how important the variable is in the model.
-```{r, include = FALSE, cache=TRUE}
+While using a model like a support vector machine can lead to the superior classification performance compared to more interpretable models, it is known to be a black box algorithm.  A way to evaluate how importance each of the variables is to go through each variable, perturb each observation and get a prediction with that perturbed data included, seeing how much the loss function changes whent this is done.  Average the change in loss for each variable -- this gives an estimate of how important the variable is in the model.  The perturbations were done as follows: perturb to the mean for numeric variables, perturb to median for categorial, flip from 0->1 or 1->0 for binary.  The importance of the variables are listed in decresing order below.
+```{r, include = FALSE}
+numeric_column_indexes <- c(1,2,3,4,5,6,9,13,14)
+ordinal_column_indexes <- c(8,11,16)
+binary_column_indexes <- c(17,18,19,20,21,22,23)
+```
+
+```{r, include = FALSE}
 importance <- c()
 for(c in 1:ncol(testset)){
+  print(c)
   
-  total_cost <- 0
-  for(r in 1:nrow(testset)){
-    
-    perturb <- testset[r,]
-    y <- perturb[1,16]
-    if(c-1 %in% numeric_column_indexes){
-      perturb[1,c] <- mean(testset[,c])
-    } else if (c-1 %in% ordinal_column_indexes){
-      perturb[1,c] <- median(testset[,c])
-    } else {
-      perturb[1,c] <- ifelse(perturb[1,c] == 2, 1, 2)
-    }
-    
-    svm.pred <- predict(svm.model, perturb[,-16], probability = TRUE)
-    svm.probs <- attr(svm.pred, "probabilities")
-    p <- svm.probs[1,1]
-    cost <- abs(y - (1+p))
-    total_cost <- cost + total_cost
+  perturb <- trainset
+  
+  if(c != 15){
+  if(c %in% numeric_column_indexes){
+    perturb[,c] <- mean(testset[,c])
+  } else if (c %in% ordinal_column_indexes){
+    perturb[,c] <- median(testset[,c])
+  } else if (c %in% binary_column_indexes){
+    perturb[,c] <- ifelse(perturb[1,c] == 1, 0, 1)
+  } else {
+    perturb[,c] <- ifelse(perturb[1,c] == 2, 1, 2)
   }
-  importance <- c(importance, total_cost/nrow(testset))
+  
+  svm.pred <- predict(svm.model, perturb[,-15])
+  svm.class <- ifelse(svm.pred > 1.9673844, 2, 1)
+  avg_cost <- sum(abs(svm.class - perturb[,15]))/nrow(perturb)
+
+  importance <- c(importance, avg_cost)
+  }
 }
 ```
 
 ```{r, echo = FALSE}
-names(importance) <- colnames(testset)
-print(round(importance,3))
+names(importance) <- colnames(testset[-15])
+print(round(sort(importance, decreasing = TRUE),3))
 ```
-These numbers can be roughly interpreted as the average absolute error of the predictions, consider the given variable had been perturbed. Not a whole lot can be said here -- it can be observed age is clearly the most important variable.  It can also be said though, that the similar importance of most of the variables points towards why SVMs are difficult to interpret.
+These numbers can be roughly interpreted as the average absolute error of the predictions, considering the given variable had been perturbed. Not a whole lot can be said here -- it can be observed age is the most important variable.  race_other_hisp (The non-Mexican-American hispanic racial category), also has a much higher importance compared to the other covariates.  Race_white and (oddly) smoker_yes (the boolean variable indicating whether somone was a smoker) are of the lowest importance.  It can also be said though, that the similar importance of most of the variables points towards why SVMs are difficult to interpret, and that this is not a very satifsfactory conclusion
