@@ -4,17 +4,27 @@ output: html_notebook
 author: "Noah Stafford"
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+```{r knitr_options , include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=4,
+fig.path='Figs/', warning=FALSE,
+message=FALSE)
+set.seed(53079239)
+```
 
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
 
 ```{r, include=FALSE}
 # libraries
 library(tidyverse)
 library(readxl)
-# Setwd
-setwd("C:/Users/woody/Google Drive/github_repos/826_Advanced_Data_Analysis/hw4")
+library(e1071)
+library(rpart)
+library(ROCR)
+library(BBmisc)
+library(rminer)
+library(caret)
 ```
+
+# Data Wrangling
 
 Let's look at what the data looks like right after its imported.
 ```{r, echo=FALSE}
@@ -44,24 +54,193 @@ The issue, of course, is that perhaps the least balanced variable in the dataset
 nh_diab_plot_diab <- nh_diab %>% gather(key = "covariate", value = "value", -c(id,diabetic))
 covariate_names <- unique(nh_diab_plot_diab$covariate)
 
-ggplot(nh_diab_plot %>% filter(covariate %in% covariate_names[1:3]), aes(x=value)) + geom_histogram() + facet_wrap(covariate~diabetic, scales = "free", ncol=2) + theme_light()
+ggplot(nh_diab_plot_diab %>% filter(covariate %in% covariate_names[1:3]), aes(x=value)) + geom_histogram() + facet_wrap(covariate~diabetic, scales = "free", ncol=2) + theme_light()
 
-ggplot(nh_diab_plot %>% filter(covariate %in% covariate_names[4:6]), aes(x=value)) + geom_histogram() + facet_wrap(covariate~diabetic, scales = "free", ncol=2) + theme_light()
+ggplot(nh_diab_plot_diab %>% filter(covariate %in% covariate_names[4:6]), aes(x=value)) + geom_histogram() + facet_wrap(covariate~diabetic, scales = "free", ncol=2) + theme_light()
 
-ggplot(nh_diab_plot %>% filter(covariate %in% covariate_names[7:9]), aes(x=value)) + geom_histogram() + facet_wrap(covariate~diabetic, scales = "free", ncol=2) + theme_light()
+ggplot(nh_diab_plot_diab %>% filter(covariate %in% covariate_names[7:9]), aes(x=value)) + geom_histogram() + facet_wrap(covariate~diabetic, scales = "free", ncol=2) + theme_light()
 
-ggplot(nh_diab_plot %>% filter(covariate %in% covariate_names[10:12]), aes(x=value)) + geom_histogram() + facet_wrap(covariate~diabetic, scales = "free", ncol=2) + theme_light()
+ggplot(nh_diab_plot_diab %>% filter(covariate %in% covariate_names[10:12]), aes(x=value)) + geom_histogram() + facet_wrap(covariate~diabetic, scales = "free", ncol=2) + theme_light()
 
-ggplot(nh_diab_plot %>% filter(covariate %in% covariate_names[13:15]), aes(x=value)) + geom_histogram() + facet_wrap(covariate~diabetic, scales = "free", ncol=2) + theme_light()
+ggplot(nh_diab_plot_diab %>% filter(covariate %in% covariate_names[13:15]), aes(x=value)) + geom_histogram() + facet_wrap(covariate~diabetic, scales = "free", ncol=2) + theme_light()
 
-ggplot(nh_diab_plot %>% filter(covariate %in% covariate_names[16]), aes(x=value)) + geom_histogram() + facet_wrap(covariate~diabetic, scales = "free", ncol=2) + theme_light()
+ggplot(nh_diab_plot_diab %>% filter(covariate %in% covariate_names[16]), aes(x=value)) + geom_histogram() + facet_wrap(covariate~diabetic, scales = "free", ncol=2) + theme_light()
 ```
 
-By splitting the histograms on the response variable, we're looking for covariables with few observations within one category.  It can  be seen that we're getting only about 20 observations in some of the income bins for the diabetic patients.  The income bins needs to be widened, and the 12th and 13th bins need to either be incorporated to create a strictly ordinal variable.  The other issue is some of the (other) race categories, specifically 2 and 5, have under 100 observations for diabetics.  I'm not too concerned about this, but I think the best thing to do is to lump the 'other hispanic' in with 'mexican american', and leave 'other' alone.
+By splitting the histograms on the response variable, we're looking for covariates with few observations within one category.  It can  be seen that we're getting only about 20 observations in some of the income bins for the diabetic patients.  The income bins needs to be widened, and the 12th and 13th bins need be incorporated into the scale of the others to create a strictly ordinal variable.  I binned the variables into low, middle, and high levels, coded simply as -1, 0, 1.
 
 ```{r, insert=FALSE}
-nh_diab$smoker <- ifelse(nh_diab$age_smoking == 0, 0, 1)
-nh_diab$income_bins <- ifelse(nh_diab$household_income %in% c(1,2,3,4,13), 'low',
-                                   ifelse(nh_diab$household_income %in% c(5,6,7,8,12), 'middle', 'high'))
+nh_diab$income_bins <- ifelse(nh_diab$household_income %in% c(1,2,3,4,13), -1,
+                                   ifelse(nh_diab$household_income %in% c(5,6,7,8,12), 0, ifelse(is.na(nh_diab$household_income), 0, 1)))
+nh_diab <- nh_diab %>% select(-household_income)
 ```
 
+# Missing Data Imputation
+
+There is a significant amount of missing data.
+```{r, echo=FALSE}
+nh_diab_na <- nh_diab[complete.cases(nh_diab), ]
+```
+
+There are `r nrow(nh_diab)` rows in the data.  Removing all obervations with at least one missing missing observation, the dataset shrinks to `r nrow(nh_diab_na)`.  I would rather work with all the information present.  Let's look at which columns have missing data, and how much:
+
+```{r, echo=FALSE}
+apply(nh_diab, 2, function(x) sum(is.na(x)))
+```
+
+From this table we can see that the age_smoking variable is by far the largest issue in this regard. We have no missing data for the 'diabetic' response variable, which is good.  Since this dataset is small enough, and since this is survey population health data, I don't think that using some sort of advanced data imputation would be very useful.  For the numeric variables, the population mean will be substituted.  For ordinal categorial variables such as activity and education, I took the median instead of the mean to preserve the categorical nature of the data.  The boolean variables were stochastically assigned 0 and 1 with probability p equal to the populaton mean.  Finally, age_smoking proved the largest challenge.  I hypothesized that, since so much data was missing, that perhaps there is some information there.  So what's been done is two variables have been created -- smoking_na is a binary variable where 1 = NA obervation and 0 = non-NA.  For smoking_yes, 1 = smoking_age > 0 and not na.  The NAs in the age_smoking column were all coerced to 0's.
+
+```{r, include=FALSE}
+fit_data <- nh_diab
+
+numeric_column_indexes <- c(2, 3, 4, 5, 6, 7, 10)
+for(i in numeric_column_indexes){
+  fit_data[is.na(fit_data[,i]), i] <- mean(fit_data[,i], na.rm = TRUE)
+}
+
+ordinal_column_indexes <- c(9, 12)
+for(i in ordinal_column_indexes){
+  fit_data[is.na(fit_data[,i]), i] <- median(fit_data[,i], na.rm = TRUE)
+}
+
+boolean_column_indexes <- c(8, 11)
+for(i in boolean_column_indexes){
+  fit_data[is.na(fit_data[,i]), i] <- rbernoulli(1, p=mean(fit_data[,i], na.rm = TRUE))
+}
+
+fit_data$smoker_na <- ifelse(is.na(nh_diab$age_smoking), 1, 0)
+fit_data$smoker_yes <- ifelse(nh_diab$age_smoking > 0 & !is.na(nh_diab$age_smoking), 1, 0)
+fit_data$age_smoking <- ifelse(is.na(nh_diab$age_smoking), 0, nh_diab$age_smoking)
+
+fit_data <- fit_data[,-1]
+```
+
+# Machine Learning Pipeline
+Now that we have a full dataset, we need run an ML pipeline to build a model and evaluate its predective abilities.  For this assignment, I'll be using a Support-Vector Machine model.  The data was split into an 66/33 train/test split.
+
+```{r, include = FALSE}
+## split data into a train and test set
+index <- 1:nrow(fit_data)
+testindex <- sample(index, trunc(length(index)/3))
+testset <- fit_data[testindex,]
+trainset <- fit_data[-testindex,]
+
+```
+
+
+```{r, echo=FALSE}
+data.frame(cor(fit_data))
+```
+Examining the correlations between variables, we see there is a high correlation between height and upper_leg_length, and weist and weight, thought not much else.  I think it is safe to leave all variables in the model -- even with the high correlation between a couple of the covariates, with our sample size dimensionality issues are not particularly a concern, and there are perhaps non-linear relationships between any of the correlated covariates and the reponse variable that might help improve the model.
+
+First, let's do a grid search across the hyperparameter space, getting the mean of AUCs from models fit using 10-fold cross validation on each parameter setting.  The grid search will be across an exponential grid from 10^-2 to 10^5.  
+
+```{r, include = FALSE}
+file_bool <- file.exists("../Robjects/cv_list.Rdata")
+if(file_bool == TRUE){
+  
+  load("../Robjects/cv_list.Rdata")
+  
+} else {
+  gamma_range <- 10^(-2:5)
+  cost_range <- 10^(-2:5)
+  
+  flds <- createFolds(trainset$diabetic, k = 10, list = TRUE, returnTrain = FALSE)
+  
+  cv_auc <- list()
+  for(g in 1:length(gamma_range)){
+    for(c in 1:length(cost_range)){
+      hyper_setting <- paste0("gamma: ", gamma, " cost: ", cost)
+      auc_vec <- c()
+      for(f in 1:10){
+      start_time <- Sys.time()
+      gamma <- gamma_range[g]
+      cost <- cost_range[c]
+      trainset_fold <- trainset[flds[[f]],]
+      testset_fold <- trainset[-flds[[f]],]
+      print(hyper_setting)
+      print(paste0(nrow(trainset_fold), " ", nrow(testset_fold)))
+      svm.fold.model <- svm(diabetic ~ ., data = trainset_fold, cost = cost, gamma = gamma, 
+                            type = "C-classification", probability = TRUE)
+      
+      svm.pred <- predict(svm.fold.model, testset_fold[,-16], probability = TRUE)
+      svm.probs <- attr(svm.pred, "probabilities")
+      pr <-prediction(svm.probs[,1], testset_fold$diabetic)
+      auc <- performance(pr, measure = "auc")@y.values[[1]]
+      auc_vec <- c(auc_vec, auc)
+      
+      print(paste0("AUC: ", auc))
+      end_time <- Sys.time()
+      print(paste0("Time to fit: ", end_time - start_time, " secs"))
+      
+      }
+      cv_auc[[hyper_setting]] <- mean(auc_vec)
+    }
+  }
+}
+```
+
+
+The max AUC from the parameters searched is `r round(max(unlist(cv_auc)), 3)`, which was attained with the hyperparameter setting gamma = 0.01, cost = 0.01.  Now, let's fit the SVM on the entire training set and see how it performs on the test data.
+
+```{r, include = FALSE}
+gamma <- 0.01
+cost <- 0.01
+svm.model <- svm(diabetic ~ ., data = trainset, cost = cost, gamma = gamma, type = "C-classification", probability=TRUE)
+svm.pred <- predict(svm.model, testset[,-16], probability = TRUE)
+svm.probs <- attr(svm.pred, "probabilities")
+```
+
+
+```{r, echo = FALSE}
+pr <- prediction(svm.probs[,1], testset$diabetic)
+prf <- performance(pr, measure="tpr",x.measure="fpr")
+plot(prf, main="SVM ROC Curve")
+lines(x = c(0,1), y = c(0,1),col="blue")
+```
+```{r, echo=FALSE}
+opt.cut = function(perf, pred){
+    cut.ind = mapply(FUN=function(x, y, p){
+        d = (x - 0)^2 + (y-1)^2
+        ind = which(d == min(d))
+        c(sensitivity = y[[ind]], specificity = 1-x[[ind]], 
+            cutoff = p[[ind]])
+    }, perf@x.values, perf@y.values, pred@cutoffs)
+}
+print(opt.cut(prf, pr))
+print(paste0("AUC    ", performance(pr, measure = "auc")@y.values[[1]]))
+```
+
+While using a model like a support vector machine can lead to the superior classification performance compared to more interpretable models, it is known to be a black box algorithm.  A way to evaluate how important each of the variables are is to perturb each observation, and see how much the loss function changes whent this is done.  Average the change in loss for each variable and each observation -- this gives an estimate of how important the variable is in the model.
+```{r, include = FALSE, cache=TRUE}
+importance <- c()
+for(c in 1:ncol(testset)){
+  
+  total_cost <- 0
+  for(r in 1:nrow(testset)){
+    
+    perturb <- testset[r,]
+    y <- perturb[1,16]
+    if(c-1 %in% numeric_column_indexes){
+      perturb[1,c] <- mean(testset[,c])
+    } else if (c-1 %in% ordinal_column_indexes){
+      perturb[1,c] <- median(testset[,c])
+    } else {
+      perturb[1,c] <- ifelse(perturb[1,c] == 2, 1, 2)
+    }
+    
+    svm.pred <- predict(svm.model, perturb[,-16], probability = TRUE)
+    svm.probs <- attr(svm.pred, "probabilities")
+    p <- svm.probs[1,1]
+    cost <- abs(y - (1+p))
+    total_cost <- cost + total_cost
+  }
+  importance <- c(importance, total_cost/nrow(testset))
+}
+```
+
+```{r, echo = FALSE}
+names(importance) <- colnames(testset)
+print(round(importance,3))
+```
+These numbers can be roughly interpreted as the average absolute error of the predictions, consider the given variable had been perturbed. Not a whole not can be said here -- it can be observed age is clearly the most important variable. 
