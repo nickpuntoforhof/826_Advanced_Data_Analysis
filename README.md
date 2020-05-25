@@ -14,7 +14,7 @@ Homework 2:
 
 Homework 3:
 [Assignment](https://kbroman.org/AdvData/hw3.html) --
-Report:
+Report
 [Part 1](https://nickpuntoforhof.github.io/826_Advanced_Data_Analysis/826_HW3_REPORT_Part_1_Noah_Stafford.pdf),
 [Part 2](https://nickpuntoforhof.github.io/826_Advanced_Data_Analysis/826_HW3_REPORT_Part_2_Noah_Stafford.pdf)
 
