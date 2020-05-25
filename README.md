@@ -1,6 +1,6 @@
 # 826_Advanced_Data_Analysis
 
-All source code and reports for Karl Broman's 826 Advanced Data Analysis Course -- UW-Madison Spring 2020
+All source code and reports for Karl Broman's [826 Advanced Data Analysis Course](https://kbroman.org/AdvData/) -- UW-Madison Spring 2020
 
 The reports created as homework can be found at the links below:
 
